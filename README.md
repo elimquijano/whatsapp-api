@@ -12,7 +12,7 @@ API para enviar mensajes a través de WhatsApp usando `whatsapp-web.js` y `Expre
 
 1. Clona el repositorio:
    ```bash
-   git clone https://github.com/tu_usuario/whatsapp-api.git
+   git clone https://github.com/elimquijano/whatsapp-api.git
    cd whatsapp-api
 
 2. Instala dependencias:
@@ -36,8 +36,8 @@ API para enviar mensajes a través de WhatsApp usando `whatsapp-web.js` y `Expre
 
 - GET /status: Verifica si el cliente de WhatsApp está listo.
 - POST /send-message: Envía un mensaje.
-    Headers: Authorization: Bearer tu_token_secreto
-    Body:
+    - Headers: Authorization: Bearer tu_token_secreto
+    - Body:
         ```json
         {
         "number": "CODIGOPAISNUMERO",
