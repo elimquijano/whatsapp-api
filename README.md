@@ -13,24 +13,24 @@ API para enviar mensajes a través de WhatsApp usando `whatsapp-web.js` y `Expre
 1. Clona el repositorio:
    ```bash
    git clone https://github.com/tu_usuario/whatsapp-api.git
-   cd whatsapp-api```
+   cd whatsapp-api
 
 2. Instala dependencias:
 ```bash
-npm install```
+npm install
 
 3. Crea un archivo .env:
 
 ```plaintext
 API_TOKEN=tu_token_secreto
-PORT=3000```
+PORT=3000
 
 # Uso
 
 1. Inicia el servidor:
 
 ```bash
-node index.js```
+node index.js
 
 2. Escanea el código QR en la consola.
 
@@ -44,7 +44,7 @@ Body:
 {
   "number": "CODIGOPAISNUMERO",
   "message": "Tu mensaje"
-}```
+}
 
 # Notas
 
