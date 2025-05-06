@@ -28,21 +28,21 @@ API para enviar mensajes a través de WhatsApp usando `whatsapp-web.js` y `Expre
 
 1. Inicia el servidor:
     ```bash
-    node index.js
+    node app.js
 
 2. Escanea el código QR en la consola.
 
 3. Endpoints
 
-GET /status: Verifica si el cliente de WhatsApp está listo.
-POST /send-message: Envía un mensaje.
-Headers: Authorization: Bearer tu_token_secreto
-Body:
-    ```json
-    {
-    "number": "CODIGOPAISNUMERO",
-    "message": "Tu mensaje"
-    }
+- GET /status: Verifica si el cliente de WhatsApp está listo.
+- POST /send-message: Envía un mensaje.
+    Headers: Authorization: Bearer tu_token_secreto
+    Body:
+        ```json
+        {
+        "number": "CODIGOPAISNUMERO",
+        "message": "Tu mensaje"
+        }
 
 # Notas
 
