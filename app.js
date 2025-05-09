@@ -1,18 +1,18 @@
-require("dotenv").config(); // Carga las variables de entorno desde .env al inicio
+require("dotenv").config();
 
-const { Client, LocalAuth } = require("whatsapp-web.js");
+const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js"); // <--- AÑADIR MessageMedia
 const qrcode = require("qrcode-terminal");
 const express = require("express");
+const axios = require("axios"); // Para descargar la imagen desde una URL
+const fs = require("fs"); // Para manejar archivos si fuera necesario (ej. base64)
+const path = require("path"); // Para manejar rutas de archivos
 
 // --- Variables de Entorno ---
 const API_TOKEN = process.env.API_TOKEN;
-const PORT = process.env.PORT || 3000; // Usa el puerto del .env o 3000 por defecto
+const PORT = process.env.PORT || 3000;
 
 if (!API_TOKEN) {
   console.error("Error: La variable de entorno API_TOKEN no está definida.");
-  console.error(
-    "Por favor, crea un archivo .env con API_TOKEN='tu_token_secreto'"
-  );
   process.exit(1);
 }
 
@@ -94,134 +94,169 @@ client.initialize().catch((err) => {
   process.exit(1);
 });
 
-// --- Middleware de Autenticación por Token ---
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
-  // El token se espera en formato "Bearer TU_TOKEN"
   const token = authHeader && authHeader.split(" ")[1];
-
-  if (token == null) {
-    console.warn("[Auth] Token no proporcionado");
+  if (token == null)
     return res
       .status(401)
-      .json({
-        success: false,
-        error: "Acceso no autorizado: Token no proporcionado.",
-      });
-  }
-
+      .json({ success: false, error: "Token no proporcionado." });
   if (token === API_TOKEN) {
-    console.log("[Auth] Token válido.");
-    next(); // Token válido, continuar con la solicitud
+    next();
   } else {
-    console.warn("[Auth] Token inválido recibido.");
-    return res
-      .status(403)
-      .json({ success: false, error: "Acceso prohibido: Token inválido." });
+    return res.status(403).json({ success: false, error: "Token inválido." });
   }
 };
 
-// --- Servidor API con Express ---
 function startApiServer() {
   const app = express();
-
-  app.use(express.json());
+  app.use(express.json({ limit: "10mb" })); // Aumentar límite para base64 si es necesario
+  app.use(express.urlencoded({ extended: true, limit: "10mb" })); // Para formularios, también con límite
 
   app.use((req, res, next) => {
     console.log(`[API Request] ${req.method} ${req.url}`);
     next();
   });
 
-  // Rutas públicas (ej. status, no requieren token)
   app.get("/status", (req, res) => {
     console.log("Endpoint /status (GET) alcanzado.");
-    if (!isWhatsappReady) {
-      return res.status(503).json({
-        success: false,
-        status: "WhatsApp client not ready",
-        message: "El cliente de WhatsApp no está listo o está desconectado.",
-      });
-    }
-    res.status(200).json({
-      success: true,
-      status: "WhatsApp client ready",
-      clientInfo: whatsappClientInfo
-        ? {
-            pushname: whatsappClientInfo.pushname,
-            phoneNumber: whatsappClientInfo.wid?.user,
-            platform: whatsappClientInfo.platform,
-          }
-        : null,
+    res.status(isWhatsappReady ? 200 : 503).json({
+      success: isWhatsappReady,
+      status: isWhatsappReady
+        ? "WhatsApp client ready"
+        : "WhatsApp client not ready",
+      clientInfo:
+        isWhatsappReady && whatsappClientInfo
+          ? {
+              pushname: whatsappClientInfo.pushname,
+              phoneNumber: whatsappClientInfo.wid?.user,
+              platform: whatsappClientInfo.platform,
+            }
+          : null,
     });
   });
 
-  // Rutas protegidas por token
-  // Aplicar el middleware de autenticación a las rutas que lo necesiten
   app.post("/send-message", authenticateToken, async (req, res) => {
-    // <--- authenticateToken AÑADIDO AQUÍ
     console.log("Endpoint /send-message (POST) alcanzado.");
-    console.log("Body recibido:", req.body);
-
-    if (!isWhatsappReady) {
+    if (!isWhatsappReady)
       return res
         .status(503)
-        .json({
-          success: false,
-          error: "El cliente de WhatsApp no está listo todavía.",
-        });
-    }
+        .json({ success: false, error: "Cliente de WhatsApp no listo." });
 
     const { number, message } = req.body;
+    if (!number || !message)
+      return res
+        .status(400)
+        .json({ success: false, error: 'Faltan "number" o "message".' });
 
-    if (!number || !message) {
+    const cleanedNumber = String(number).replace(/\D/g, "");
+    const chatId = `${cleanedNumber}@c.us`;
+
+    try {
+      console.log(`Enviando mensaje de texto a ${chatId}: "${message}"`);
+      const msgSent = await client.sendMessage(chatId, message);
+      res
+        .status(200)
+        .json({
+          success: true,
+          message: "Mensaje enviado.",
+          messageId: msgSent.id.id,
+          to: chatId,
+        });
+    } catch (error) {
+      console.error(`Error enviando mensaje a ${chatId}:`, error);
+      res
+        .status(500)
+        .json({
+          success: false,
+          error: "Error al enviar mensaje.",
+          details: error.message,
+        });
+    }
+  });
+
+  // --- NUEVA RUTA PARA ENVIAR MEDIA (IMÁGENES) ---
+  app.post("/send-media", authenticateToken, async (req, res) => {
+    console.log("Endpoint /send-media (POST) alcanzado.");
+    if (!isWhatsappReady)
+      return res
+        .status(503)
+        .json({ success: false, error: "Cliente de WhatsApp no listo." });
+
+    const { number, caption, mediaUrl, mediaBase64, mimetype } = req.body;
+
+    if (!number || (!mediaUrl && !mediaBase64)) {
       return res
         .status(400)
         .json({
           success: false,
           error:
-            'Faltan los parámetros "number" (string) o "message" (string).',
+            'Faltan "number" y ("mediaUrl" o "mediaBase64" con "mimetype").',
         });
     }
 
     const cleanedNumber = String(number).replace(/\D/g, "");
-    // Ajusta la validación del número si es necesario para otros países, o hazla más genérica
-    // Para Perú: const peruNumberRegex = /^519\d{8}$/;
-    // if (!peruNumberRegex.test(cleanedNumber)) { ... }
     const chatId = `${cleanedNumber}@c.us`;
+    let media;
 
     try {
-      console.log(`Intentando enviar mensaje a ${chatId}: "${message}"`);
-      const msgSent = await client.sendMessage(chatId, message);
-      console.log(`Mensaje enviado a ${chatId} (ID: ${msgSent.id.id})`);
+      if (mediaUrl) {
+        console.log(`Descargando media desde URL: ${mediaUrl}`);
+        // Para MessageMedia.fromUrl, la biblioteca se encarga de descargar
+        // y obtener el mimetype si es posible. A veces es mejor ser explícito.
+        media = await MessageMedia.fromUrl(mediaUrl, { unsafeMime: true }); // unsafeMime puede ayudar con algunos servidores
+        console.log(
+          `Media obtenida de URL. Mimetype detectado/usado: ${media.mimetype}, Tamaño: ${media.data.length}`
+        );
+      } else if (mediaBase64 && mimetype) {
+        console.log(
+          `Creando media desde Base64. Mimetype: ${mimetype}, Longitud Base64: ${mediaBase64.length}`
+        );
+        media = new MessageMedia(mimetype, mediaBase64);
+        // No es necesario `filename` para MessageMedia si se envía directamente,
+        // pero puede ser útil si WhatsApp lo necesita para mostrarlo bien.
+        // media.filename = "image.jpg"; // Opcional, puedes hacerlo dinámico
+      } else {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error: 'Debe proveer "mediaUrl" o ("mediaBase64" y "mimetype").',
+          });
+      }
+
+      console.log(
+        `Enviando media a ${chatId}${
+          caption ? ` con caption: "${caption}"` : ""
+        }`
+      );
+      const msgSent = await client.sendMessage(chatId, media, {
+        caption: caption || "",
+      });
       res
         .status(200)
         .json({
           success: true,
-          message: "Mensaje enviado exitosamente.",
+          message: "Media enviada.",
           messageId: msgSent.id.id,
           to: chatId,
         });
     } catch (error) {
-      console.error(`Error al enviar mensaje a ${chatId}:`, error);
-      let errorMessage = "Error al enviar el mensaje.";
-      if (error.message && error.message.includes("message to unknown user")) {
-        errorMessage = "El número de destino no existe o no tiene WhatsApp.";
-      } else if (error.message) {
-        errorMessage = error.message;
+      console.error(`Error enviando media a ${chatId}:`, error);
+      let errorDetails = error.message;
+      if (error.response && error.response.data) {
+        // Si es un error de axios al descargar
+        errorDetails = error.response.data;
       }
       res
         .status(500)
         .json({
           success: false,
-          error: errorMessage,
-          details: error.toString(),
-          numberUsed: chatId,
+          error: "Error al enviar media.",
+          details: errorDetails,
         });
     }
   });
-
-  // Puedes añadir más rutas protegidas de la misma manera:
-  // app.post('/send-media', authenticateToken, async (req, res) => { /* ... */ });
 
   app.use((req, res, next) => {
     console.error(`Ruta no encontrada: ${req.method} ${req.url}`);
@@ -241,9 +276,7 @@ function startApiServer() {
     console.log(
       "================================================================================"
     );
-    console.log(
-      `API de WhatsApp escuchando en http://localhost:${PORT} (y en tu IP local)`
-    );
+    console.log(`API de WhatsApp escuchando en http://localhost:${PORT}`);
     console.log("Rutas públicas:");
     console.log(`  GET http://localhost:${PORT}/status`);
     console.log(
@@ -253,9 +286,14 @@ function startApiServer() {
     console.log(
       '     Body JSON: { "number": "CODIGOPAISNUMERO", "message": "Tu mensaje" }'
     );
+    console.log(`  POST http://localhost:${PORT}/send-media`);
     console.log(
-      `TOKEN configurado: ${API_TOKEN ? "Sí (desde .env)" : "NO (¡PELIGRO!)"}`
+      '     Body JSON (Opción 1 - URL): { "number": "...", "caption": "(opcional)", "mediaUrl": "URL_IMAGEN" }'
     );
+    console.log(
+      '     Body JSON (Opción 2 - Base64): { "number": "...", "caption": "(opcional)", "mediaBase64": "DATOS_BASE64", "mimetype": "image/jpeg" }'
+    );
+    console.log(`TOKEN configurado: ${API_TOKEN ? "Sí" : "NO"}`);
     console.log(
       "================================================================================"
     );
