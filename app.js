@@ -1,18 +1,18 @@
 require("dotenv").config();
 
-const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js"); // <--- AÑADIR MessageMedia
+const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const express = require("express");
-const axios = require("axios"); // Para descargar la imagen desde una URL
-const fs = require("fs"); // Para manejar archivos si fuera necesario (ej. base64)
-const path = require("path"); // Para manejar rutas de archivos
+
+const logger = require("./logger");
+const MAX_MESSAGE_LENGTH = 1000;
 
 // --- Variables de Entorno ---
 const API_TOKEN = process.env.API_TOKEN;
 const PORT = process.env.PORT || 3000;
 
 if (!API_TOKEN) {
-  console.error("Error: La variable de entorno API_TOKEN no está definida.");
+  logger.error("Error: La variable de entorno API_TOKEN no está definida.");
   process.exit(1);
 }
 
@@ -38,59 +38,47 @@ const client = new Client({
 let isWhatsappReady = false;
 let whatsappClientInfo = null;
 
-console.log("Inicializando cliente de WhatsApp...");
+logger.info("Inicializando cliente de WhatsApp...");
 
 client.on("qr", (qr) => {
-  console.log(
-    "--------------------------------------------------------------------------------"
-  );
-  console.log(
+  logger.info(
     "¡Código QR recibido! Escanéalo con tu WhatsApp para vincular un dispositivo:"
   );
   qrcode.generate(qr, { small: true });
-  console.log(
-    "--------------------------------------------------------------------------------"
-  );
 });
 
 client.on("authenticated", () => {
-  console.log("¡Autenticado con WhatsApp!");
+  logger.info("¡Autenticado con WhatsApp!");
 });
 
 client.on("auth_failure", (msg) => {
-  console.error("¡Falló la autenticación de WhatsApp!", msg);
+  logger.error("¡Falló la autenticación de WhatsApp!", msg);
   process.exit(1);
 });
 
 client.on("ready", () => {
   isWhatsappReady = true;
   whatsappClientInfo = client.info;
-  console.log(
-    "--------------------------------------------------------------------------------"
-  );
-  console.log("¡Cliente de WhatsApp listo y conectado!");
+  logger.info("¡Cliente de WhatsApp listo y conectado!");
   if (whatsappClientInfo) {
-    console.log("Nombre:", whatsappClientInfo.pushname);
-    console.log("Número:", whatsappClientInfo.wid.user);
+    logger.info("Nombre:", whatsappClientInfo.pushname);
+    logger.info("Número:", whatsappClientInfo.wid.user);
   }
-  console.log(
-    "--------------------------------------------------------------------------------"
-  );
   startApiServer();
 });
 
 client.on("disconnected", (reason) => {
-  console.warn("Cliente de WhatsApp desconectado:", reason);
+  logger.warn("Cliente de WhatsApp desconectado:", reason);
   isWhatsappReady = false;
   whatsappClientInfo = null;
 });
 
 client.on("loading_screen", (percent, message) => {
-  console.log("Cargando WhatsApp Web:", percent + "%", message);
+  logger.info("Cargando WhatsApp Web:", percent + "%", message);
 });
 
 client.initialize().catch((err) => {
-  console.error("Error CRÍTICO al inicializar el cliente de WhatsApp:", err);
+  logger.error("Error CRÍTICO al inicializar el cliente de WhatsApp:", err);
   process.exit(1);
 });
 
@@ -108,18 +96,18 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
-function startApiServer() {
+const startApiServer = () => {
   const app = express();
   app.use(express.json({ limit: "10mb" })); // Aumentar límite para base64 si es necesario
   app.use(express.urlencoded({ extended: true, limit: "10mb" })); // Para formularios, también con límite
 
   app.use((req, res, next) => {
-    console.log(`[API Request] ${req.method} ${req.url}`);
+    logger.info(`[API Request] ${req.method} ${req.url}`);
     next();
   });
 
   app.get("/status", (req, res) => {
-    console.log("Endpoint /status (GET) alcanzado.");
+    logger.info("Endpoint /status (GET) alcanzado.");
     res.status(isWhatsappReady ? 200 : 503).json({
       success: isWhatsappReady,
       status: isWhatsappReady
@@ -136,166 +124,232 @@ function startApiServer() {
     });
   });
 
+  // --- RUTA PARA ENVIAR MENSAJES ---
   app.post("/send-message", authenticateToken, async (req, res) => {
-    console.log("Endpoint /send-message (POST) alcanzado.");
-    if (!isWhatsappReady)
-      return res
-        .status(503)
-        .json({ success: false, error: "Cliente de WhatsApp no listo." });
+    logger.info("Endpoint /send-message (POST) alcanzado.");
 
-    const { number, message } = req.body;
-    if (!number || !message)
-      return res
-        .status(400)
-        .json({ success: false, error: 'Faltan "number" o "message".' });
-
-    const cleanedNumber = String(number).replace(/\D/g, "");
-    const chatId = `${cleanedNumber}@c.us`;
-
-    try {
-      console.log(`Enviando mensaje de texto a ${chatId}: "${message}"`);
-      const msgSent = await client.sendMessage(chatId, message);
-      res
-        .status(200)
-        .json({
-          success: true,
-          message: "Mensaje enviado.",
-          messageId: msgSent.id.id,
-          to: chatId,
-        });
-    } catch (error) {
-      console.error(`Error enviando mensaje a ${chatId}:`, error);
-      res
-        .status(500)
-        .json({
-          success: false,
-          error: "Error al enviar mensaje.",
-          details: error.message,
-        });
+    if (!isWhatsappReady) {
+      return res.status(503).json({
+        success: false,
+        error: "Cliente de WhatsApp no listo.",
+      });
     }
+
+    const { numbers: numbersString, message } = req.body;
+
+    if (!numbersString || !message) {
+      return res.status(400).json({
+        success: false,
+        error: 'Los campos "numbers" y "message" son requeridos.',
+      });
+    }
+
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      logger.warn(
+        `Solicitud /send-message rechazada por exceder el límite de caracteres. Longitud: ${message.length}`
+      );
+      return res.status(413).json({
+        // 413 Payload Too Large
+        error: `El mensaje excede el límite de ${MAX_MESSAGE_LENGTH} caracteres.`,
+        longitud_enviada: message.length,
+        limite_permitido: MAX_MESSAGE_LENGTH,
+      });
+    }
+
+    const validNumbers = parseNumbers(numbersString);
+
+    if (validNumbers.length === 0) {
+      logger.warn("Solicitud /send-message sin números válidos.");
+      return res.status(400).json({
+        error:
+          'El campo "numbers" debe ser un string con números válidos de 9 dígitos separados por comas.',
+      });
+    }
+
+    const sentMessages = [];
+    const failedMessages = [];
+
+    logger.info(`Iniciando envío masivo a ${validNumbers.length} números.`);
+
+    // Usamos un bucle for...of para enviar los mensajes secuencialmente
+    // Esto evita sobrecargar al cliente o ser bloqueado por enviar demasiado rápido
+    for (const number of validNumbers) {
+      const chatId = `${number}@c.us`;
+      try {
+        logger.info(`Enviando mensaje a ${chatId}: "${message}"`);
+        const msgSent = await client.sendMessage(chatId, message);
+        sentMessages.push({
+          to: chatId,
+          messageId: msgSent.id.id,
+          status: "sent",
+        });
+      } catch (error) {
+        logger.error(`Error enviando mensaje a ${chatId}:`, error);
+        failedMessages.push({
+          to: chatId,
+          status: "failed",
+          error: error.message,
+        });
+      }
+    }
+
+    logger.info(
+      `Envío masivo completado. Éxitos: ${sentMessages.length}, Fallos: ${failedMessages.length}`
+    );
+
+    res.status(200).json({
+      success: true,
+      summary: {
+        total_requested: validNumbers.length,
+        total_sent: sentMessages.length,
+        total_failed: failedMessages.length,
+      },
+      results: {
+        sent: sentMessages,
+        failed: failedMessages,
+      },
+    });
   });
 
-  // --- NUEVA RUTA PARA ENVIAR MEDIA (IMÁGENES) ---
+  // --- RUTA PARA ENVIAR MEDIA (IMÁGENES) ---
   app.post("/send-media", authenticateToken, async (req, res) => {
-    console.log("Endpoint /send-media (POST) alcanzado.");
-    if (!isWhatsappReady)
-      return res
-        .status(503)
-        .json({ success: false, error: "Cliente de WhatsApp no listo." });
+    logger.info("Endpoint /send-media (POST) alcanzado.");
 
-    const { number, caption, mediaUrl, mediaBase64, mimetype } = req.body;
-
-    if (!number || (!mediaUrl && !mediaBase64)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error:
-            'Faltan "number" y ("mediaUrl" o "mediaBase64" con "mimetype").',
-        });
-    }
-
-    const cleanedNumber = String(number).replace(/\D/g, "");
-    const chatId = `${cleanedNumber}@c.us`;
-    let media;
-
-    try {
-      if (mediaUrl) {
-        console.log(`Descargando media desde URL: ${mediaUrl}`);
-        // Para MessageMedia.fromUrl, la biblioteca se encarga de descargar
-        // y obtener el mimetype si es posible. A veces es mejor ser explícito.
-        media = await MessageMedia.fromUrl(mediaUrl, { unsafeMime: true }); // unsafeMime puede ayudar con algunos servidores
-        console.log(
-          `Media obtenida de URL. Mimetype detectado/usado: ${media.mimetype}, Tamaño: ${media.data.length}`
-        );
-      } else if (mediaBase64 && mimetype) {
-        console.log(
-          `Creando media desde Base64. Mimetype: ${mimetype}, Longitud Base64: ${mediaBase64.length}`
-        );
-        media = new MessageMedia(mimetype, mediaBase64);
-        // No es necesario `filename` para MessageMedia si se envía directamente,
-        // pero puede ser útil si WhatsApp lo necesita para mostrarlo bien.
-        // media.filename = "image.jpg"; // Opcional, puedes hacerlo dinámico
-      } else {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            error: 'Debe proveer "mediaUrl" o ("mediaBase64" y "mimetype").',
-          });
-      }
-
-      console.log(
-        `Enviando media a ${chatId}${
-          caption ? ` con caption: "${caption}"` : ""
-        }`
-      );
-      const msgSent = await client.sendMessage(chatId, media, {
-        caption: caption || "",
+    if (!isWhatsappReady) {
+      return res.status(503).json({
+        success: false,
+        error: "Cliente de WhatsApp no listo.",
       });
-      res
-        .status(200)
-        .json({
-          success: true,
-          message: "Media enviada.",
-          messageId: msgSent.id.id,
-          to: chatId,
-        });
-    } catch (error) {
-      console.error(`Error enviando media a ${chatId}:`, error);
-      let errorDetails = error.message;
-      if (error.response && error.response.data) {
-        // Si es un error de axios al descargar
-        errorDetails = error.response.data;
-      }
-      res
-        .status(500)
-        .json({
-          success: false,
-          error: "Error al enviar media.",
-          details: errorDetails,
-        });
     }
+
+    // Cambiamos 'number' por 'numbers' para aceptar múltiples destinatarios
+    const {
+      numbers: numbersString,
+      caption,
+      mediaUrl,
+      mediaBase64,
+      mimetype,
+    } = req.body;
+
+    if (!numbersString || (!mediaUrl && !mediaBase64)) {
+      return res.status(400).json({
+        success: false,
+        error:
+          'Los campos "numbers" y ("mediaUrl" o "mediaBase64") son requeridos.',
+      });
+    }
+
+    const validNumbers = parseNumbers(numbersString);
+
+    if (validNumbers.length === 0) {
+      logger.warn("Solicitud /send-media sin números válidos.");
+      return res.status(400).json({
+        error:
+          'El campo "numbers" debe ser un string con números válidos de 9 dígitos separados por comas.',
+      });
+    }
+
+    let media;
+    try {
+      // Preparamos el objeto media UNA SOLA VEZ antes del bucle.
+      // Esto es crucial para la eficiencia, especialmente con fromUrl.
+      logger.info("Preparando el archivo multimedia para el envío...");
+      if (mediaUrl) {
+        media = await MessageMedia.fromUrl(mediaUrl, { unsafeMime: true });
+      } else if (mediaBase64 && mimetype) {
+        media = new MessageMedia(mimetype, mediaBase64);
+      } else {
+        // Esta validación es redundante por la de arriba, pero es una buena defensa
+        return res.status(400).json({
+          success: false,
+          error: 'Debe proveer "mediaUrl" o un par "mediaBase64" y "mimetype".',
+        });
+      }
+      logger.info("Archivo multimedia preparado con éxito.");
+    } catch (error) {
+      logger.error(
+        "Error al preparar el archivo multimedia desde la fuente proporcionada:",
+        error
+      );
+      return res.status(500).json({
+        success: false,
+        error: "No se pudo procesar el archivo multimedia desde la fuente.",
+        details: error.message,
+      });
+    }
+
+    const sentMedia = [];
+    const failedMedia = [];
+    const sendOptions = { caption: caption || "" };
+
+    logger.info(`Iniciando envío de media a ${validNumbers.length} números.`);
+
+    // Iteramos sobre cada número validado y enviamos el archivo
+    for (const number of validNumbers) {
+      const chatId = `${number}@c.us`;
+      try {
+        logger.info(`Enviando media a ${chatId}...`);
+        const msgSent = await client.sendMessage(chatId, media, sendOptions);
+        sentMedia.push({
+          to: chatId,
+          messageId: msgSent.id.id,
+          status: "sent",
+        });
+      } catch (error) {
+        logger.error(`Error enviando media a ${chatId}:`, error);
+        failedMedia.push({
+          to: chatId,
+          status: "failed",
+          error: error.message,
+        });
+      }
+    }
+
+    logger.info(
+      `Envío de media completado. Éxitos: ${sentMedia.length}, Fallos: ${failedMedia.length}`
+    );
+
+    // Devolvemos un resumen detallado, igual que en /send-message
+    res.status(200).json({
+      success: true,
+      summary: {
+        total_requested: validNumbers.length,
+        total_sent: sentMedia.length,
+        total_failed: failedMedia.length,
+      },
+      results: {
+        sent: sentMedia,
+        failed: failedMedia,
+      },
+    });
   });
 
   app.use((req, res, next) => {
-    console.error(`Ruta no encontrada: ${req.method} ${req.url}`);
+    logger.error(`Ruta no encontrada: ${req.method} ${req.url}`);
     res
       .status(404)
       .json({ success: false, error: "Ruta no encontrada (404)." });
   });
 
   app.use((err, req, res, next) => {
-    console.error("Error no manejado en Express:", err.stack);
+    logger.error("Error no manejado en Express:", err.stack);
     res
       .status(500)
       .json({ success: false, error: "Error interno del servidor." });
   });
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(
-      "================================================================================"
-    );
-    console.log(`API de WhatsApp escuchando en http://localhost:${PORT}`);
-    console.log("Rutas públicas:");
-    console.log(`  GET http://localhost:${PORT}/status`);
-    console.log(
-      'Rutas protegidas (requieren cabecera "Authorization: Bearer TU_TOKEN"):'
-    );
-    console.log(`  POST http://localhost:${PORT}/send-message`);
-    console.log(
-      '     Body JSON: { "number": "CODIGOPAISNUMERO", "message": "Tu mensaje" }'
-    );
-    console.log(`  POST http://localhost:${PORT}/send-media`);
-    console.log(
-      '     Body JSON (Opción 1 - URL): { "number": "...", "caption": "(opcional)", "mediaUrl": "URL_IMAGEN" }'
-    );
-    console.log(
-      '     Body JSON (Opción 2 - Base64): { "number": "...", "caption": "(opcional)", "mediaBase64": "DATOS_BASE64", "mimetype": "image/jpeg" }'
-    );
-    console.log(`TOKEN configurado: ${API_TOKEN ? "Sí" : "NO"}`);
-    console.log(
-      "================================================================================"
-    );
+    logger.info(`API de WhatsApp escuchando en puerto ${PORT}`);
+    logger.info(`TOKEN configurado: ${API_TOKEN ? "Sí" : "NO"}`);
   });
+};
+
+function parseNumbers(input) {
+  if (!input) return [];
+  const numbers = input
+    .split(",")
+    .map((num) => num.trim())
+    .filter((num) => /^\d{9}$/.test(num));
+  const formattedNumbers = numbers.map((num) => `51${num}`);
+  return formattedNumbers.length > 0 ? formattedNumbers : [];
 }
