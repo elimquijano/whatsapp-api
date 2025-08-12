@@ -35,6 +35,9 @@ const client = new Client({
       "--no-first-run",
       "--no-zygote",
       "--disable-gpu",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
     ],
   },
 });
@@ -175,13 +178,12 @@ const startApiServer = () => {
       return new Promise(async (resolve) => {
         const chatId = `${number}@c.us`;
         try {
-          // Agregamos un retraso variable para no saturar
           if (index > 0) await sleep(MESSAGE_SEND_DELAY);
           logger.info(`Enviando mensaje a ${chatId}: "${message}"`);
           const msgSent = await client.sendMessage(chatId, message);
           resolve({
             to: chatId,
-            messageId: msgSent.id.id,
+            message: msgSent || message,
             status: "sent",
           });
         } catch (error) {
@@ -293,7 +295,7 @@ const startApiServer = () => {
           const msgSent = await client.sendMessage(chatId, media, sendOptions);
           resolve({
             to: chatId,
-            messageId: msgSent.id.id,
+            message: msgSent || caption || "N/A",
             status: "sent",
           });
         } catch (error) {
