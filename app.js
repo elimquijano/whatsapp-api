@@ -6,6 +6,7 @@ const express = require("express");
 
 const logger = require("./logger");
 const MAX_MESSAGE_LENGTH = 1000;
+const MESSAGE_SEND_DELAY = 100; // 0.1 segundos de retraso
 
 // --- Variables de Entorno ---
 const API_TOKEN = process.env.API_TOKEN;
@@ -15,6 +16,9 @@ if (!API_TOKEN) {
   logger.error("Error: La variable de entorno API_TOKEN no está definida.");
   process.exit(1);
 }
+
+// --- Funciones de Utilidad ---
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Configuración del cliente de WhatsApp
 const client = new Client({
@@ -98,8 +102,8 @@ const authenticateToken = (req, res, next) => {
 
 const startApiServer = () => {
   const app = express();
-  app.use(express.json({ limit: "10mb" })); // Aumentar límite para base64 si es necesario
-  app.use(express.urlencoded({ extended: true, limit: "10mb" })); // Para formularios, también con límite
+  app.use(express.json({ limit: "10mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
   app.use((req, res, next) => {
     logger.info(`[API Request] ${req.method} ${req.url}`);
@@ -124,7 +128,7 @@ const startApiServer = () => {
     });
   });
 
-  // --- RUTA PARA ENVIAR MENSAJES ---
+  // --- RUTA PARA ENVIAR MENSAJES (OPTIMIZADA) ---
   app.post("/send-message", authenticateToken, async (req, res) => {
     logger.info("Endpoint /send-message (POST) alcanzado.");
 
@@ -149,7 +153,6 @@ const startApiServer = () => {
         `Solicitud /send-message rechazada por exceder el límite de caracteres. Longitud: ${message.length}`
       );
       return res.status(413).json({
-        // 413 Payload Too Large
         error: `El mensaje excede el límite de ${MAX_MESSAGE_LENGTH} caracteres.`,
         longitud_enviada: message.length,
         limite_permitido: MAX_MESSAGE_LENGTH,
@@ -166,32 +169,36 @@ const startApiServer = () => {
       });
     }
 
-    const sentMessages = [];
-    const failedMessages = [];
-
     logger.info(`Iniciando envío masivo a ${validNumbers.length} números.`);
 
-    // Usamos un bucle for...of para enviar los mensajes secuencialmente
-    // Esto evita sobrecargar al cliente o ser bloqueado por enviar demasiado rápido
-    for (const number of validNumbers) {
-      const chatId = `${number}@c.us`;
-      try {
-        logger.info(`Enviando mensaje a ${chatId}: "${message}"`);
-        const msgSent = await client.sendMessage(chatId, message);
-        sentMessages.push({
-          to: chatId,
-          messageId: msgSent.id.id,
-          status: "sent",
-        });
-      } catch (error) {
-        logger.error(`Error enviando mensaje a ${chatId}:`, error);
-        failedMessages.push({
-          to: chatId,
-          status: "failed",
-          error: error.message,
-        });
-      }
-    }
+    const promises = validNumbers.map((number, index) => {
+      return new Promise(async (resolve) => {
+        const chatId = `${number}@c.us`;
+        try {
+          // Agregamos un retraso variable para no saturar
+          if (index > 0) await sleep(MESSAGE_SEND_DELAY);
+          logger.info(`Enviando mensaje a ${chatId}: "${message}"`);
+          const msgSent = await client.sendMessage(chatId, message);
+          resolve({
+            to: chatId,
+            messageId: msgSent.id.id,
+            status: "sent",
+          });
+        } catch (error) {
+          logger.error(`Error enviando mensaje a ${chatId}:`, error);
+          resolve({
+            to: chatId,
+            status: "failed",
+            error: error.message,
+          });
+        }
+      });
+    });
+
+    const results = await Promise.all(promises);
+
+    const sentMessages = results.filter((r) => r.status === "sent");
+    const failedMessages = results.filter((r) => r.status === "failed");
 
     logger.info(
       `Envío masivo completado. Éxitos: ${sentMessages.length}, Fallos: ${failedMessages.length}`
@@ -211,7 +218,7 @@ const startApiServer = () => {
     });
   });
 
-  // --- RUTA PARA ENVIAR MEDIA (IMÁGENES) ---
+  // --- RUTA PARA ENVIAR MEDIA (OPTIMIZADA) ---
   app.post("/send-media", authenticateToken, async (req, res) => {
     logger.info("Endpoint /send-media (POST) alcanzado.");
 
@@ -222,7 +229,6 @@ const startApiServer = () => {
       });
     }
 
-    // Cambiamos 'number' por 'numbers' para aceptar múltiples destinatarios
     const {
       numbers: numbersString,
       caption,
@@ -251,15 +257,12 @@ const startApiServer = () => {
 
     let media;
     try {
-      // Preparamos el objeto media UNA SOLA VEZ antes del bucle.
-      // Esto es crucial para la eficiencia, especialmente con fromUrl.
       logger.info("Preparando el archivo multimedia para el envío...");
       if (mediaUrl) {
         media = await MessageMedia.fromUrl(mediaUrl, { unsafeMime: true });
       } else if (mediaBase64 && mimetype) {
         media = new MessageMedia(mimetype, mediaBase64);
       } else {
-        // Esta validación es redundante por la de arriba, pero es una buena defensa
         return res.status(400).json({
           success: false,
           error: 'Debe proveer "mediaUrl" o un par "mediaBase64" y "mimetype".',
@@ -278,38 +281,40 @@ const startApiServer = () => {
       });
     }
 
-    const sentMedia = [];
-    const failedMedia = [];
     const sendOptions = { caption: caption || "" };
-
     logger.info(`Iniciando envío de media a ${validNumbers.length} números.`);
 
-    // Iteramos sobre cada número validado y enviamos el archivo
-    for (const number of validNumbers) {
-      const chatId = `${number}@c.us`;
-      try {
-        logger.info(`Enviando media a ${chatId}...`);
-        const msgSent = await client.sendMessage(chatId, media, sendOptions);
-        sentMedia.push({
-          to: chatId,
-          messageId: msgSent.id.id,
-          status: "sent",
-        });
-      } catch (error) {
-        logger.error(`Error enviando media a ${chatId}:`, error);
-        failedMedia.push({
-          to: chatId,
-          status: "failed",
-          error: error.message,
-        });
-      }
-    }
+    const promises = validNumbers.map((number, index) => {
+      return new Promise(async (resolve) => {
+        const chatId = `${number}@c.us`;
+        try {
+          if (index > 0) await sleep(MESSAGE_SEND_DELAY);
+          logger.info(`Enviando media a ${chatId}...`);
+          const msgSent = await client.sendMessage(chatId, media, sendOptions);
+          resolve({
+            to: chatId,
+            messageId: msgSent.id.id,
+            status: "sent",
+          });
+        } catch (error) {
+          logger.error(`Error enviando media a ${chatId}:`, error);
+          resolve({
+            to: chatId,
+            status: "failed",
+            error: error.message,
+          });
+        }
+      });
+    });
+
+    const results = await Promise.all(promises);
+    const sentMedia = results.filter((r) => r.status === "sent");
+    const failedMedia = results.filter((r) => r.status === "failed");
 
     logger.info(
       `Envío de media completado. Éxitos: ${sentMedia.length}, Fallos: ${failedMedia.length}`
     );
 
-    // Devolvemos un resumen detallado, igual que en /send-message
     res.status(200).json({
       success: true,
       summary: {
