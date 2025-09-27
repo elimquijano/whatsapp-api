@@ -1,12 +1,28 @@
-# .gitignore
+# Dependencies
 node_modules/
-.env
-whatsapp_session/
-# u otra carpeta de sesión que uses, ej: .wwebjs_auth/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-package-lock.json
+# Environment variables
+.env
+
+# Logs
+logs/
+*.log
+
+# WhatsApp session
 .wwebjs_auth/
 .wwebjs_cache/
+
+# Uploads (archivos temporales)
+uploads/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
