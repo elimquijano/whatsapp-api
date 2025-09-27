@@ -3,7 +3,12 @@
  * Requiere usuario y contraseña desde variables de entorno
  */ const express = require("express");
 const multer = require("multer");
-const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
+const {
+  Client,
+  LocalAuth,
+  MessageMedia,
+  Location,
+} = require("whatsapp-web.js");
 const fs = require("fs");
 const path = require("path");
 const winston = require("winston");
@@ -26,9 +31,18 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Crear directorio de uploads si no existe
+// Crear directorios necesarios
 if (!fs.existsSync("./uploads")) {
   fs.mkdirSync("./uploads");
+}
+
+if (!fs.existsSync("./received_media")) {
+  fs.mkdirSync("./received_media");
+  fs.mkdirSync("./received_media/images");
+  fs.mkdirSync("./received_media/documents");
+  fs.mkdirSync("./received_media/audio");
+  fs.mkdirSync("./received_media/videos");
+  fs.mkdirSync("./received_media/stickers");
 }
 
 // Configuración de logs por día
@@ -225,27 +239,388 @@ const initializeWhatsAppClient = () => {
     qrToken = null; // Limpiar token al desconectarse
   });
 
-  // ====== EVENTOS DE MENSAJES ======
-
   /**
-   * Leer mensajes entrantes y mostrar en consola
+   * Leer mensajes entrantes completos con descarga de medios
    */
   client.on("message", async (message) => {
-    const contact = await message.getContact();
-    const chat = await message.getChat();
+    try {
+      const contact = await message.getContact();
+      const chat = await message.getChat();
 
-    logger.info("📨 Mensaje recibido:", {
-      from: contact.name || contact.pushname || message.from,
-      body: message.body,
-      type: message.type,
-      isGroup: chat.isGroup,
-      groupName: chat.isGroup ? chat.name : null,
-      timestamp: new Date(message.timestamp * 1000).toISOString(),
-    });
+      // Información base del mensaje
+      const messageInfo = {
+        id: message.id._serialized,
+        from: contact.name || contact.pushname || message.from,
+        fromNumber: message.from.replace("@c.us", "").replace("@g.us", ""),
+        body: message.body,
+        type: message.type,
+        timestamp: new Date(message.timestamp * 1000).toISOString(),
+        isGroup: chat.isGroup,
+        groupName: chat.isGroup ? chat.name : null,
+        isForwarded: message.isForwarded,
+        hasMedia: message.hasMedia,
+        ack: message.ack, // Estado de entrega
+      };
 
-    // Auto-respuestas basadas en palabras clave
-    await handleAutoResponses(message);
+      // Procesar según el tipo de mensaje
+      await processMessageByType(message, messageInfo);
+    } catch (error) {
+      logger.error("Error procesando mensaje:", error);
+    }
   });
+
+  /**
+   * Procesar mensaje según su tipo y descargar medios
+   */
+  async function processMessageByType(message, messageInfo) {
+    let additionalInfo = {};
+
+    try {
+      switch (message.type) {
+        case "chat": // Mensaje de texto
+          logger.info("📝 Mensaje de texto recibido:", messageInfo);
+          break;
+
+        case "image": // Imagen
+          additionalInfo = await processImageMessage(message);
+          logger.info("🖼️ Imagen recibida:", {
+            ...messageInfo,
+            ...additionalInfo,
+          });
+          break;
+
+        case "document": // Documento
+          additionalInfo = await processDocumentMessage(message);
+          logger.info("📄 Documento recibido:", {
+            ...messageInfo,
+            ...additionalInfo,
+          });
+          break;
+
+        case "ptt": // Nota de voz (Push to Talk)
+        case "audio": // Audio
+          additionalInfo = await processAudioMessage(message);
+          logger.info("🎵 Audio/Nota de voz recibida:", {
+            ...messageInfo,
+            ...additionalInfo,
+          });
+          break;
+
+        case "video": // Video
+          additionalInfo = await processVideoMessage(message);
+          logger.info("🎥 Video recibido:", {
+            ...messageInfo,
+            ...additionalInfo,
+          });
+          break;
+
+        case "sticker": // Sticker
+          additionalInfo = await processStickerMessage(message);
+          logger.info("😊 Sticker recibido:", {
+            ...messageInfo,
+            ...additionalInfo,
+          });
+          break;
+
+        case "location": // Ubicación
+          additionalInfo = processLocationMessage(message);
+          logger.info("📍 Ubicación recibida:", {
+            ...messageInfo,
+            ...additionalInfo,
+          });
+          break;
+
+        case "vcard": // Contacto
+          additionalInfo = processContactMessage(message);
+          logger.info("👤 Contacto recibido:", {
+            ...messageInfo,
+            ...additionalInfo,
+          });
+          break;
+
+        case "multi_vcard": // Múltiples contactos
+          additionalInfo = processMultiContactMessage(message);
+          logger.info("👥 Múltiples contactos recibidos:", {
+            ...messageInfo,
+            ...additionalInfo,
+          });
+          break;
+
+        case "revoked": // Mensaje eliminado
+          logger.info("🗑️ Mensaje eliminado:", messageInfo);
+          break;
+
+        case "ciphertext": // Mensaje cifrado (no descifrable)
+          logger.info("🔒 Mensaje cifrado recibido:", messageInfo);
+          break;
+
+        default:
+          logger.info("❓ Mensaje de tipo desconocido:", {
+            ...messageInfo,
+            rawType: message.type,
+          });
+          break;
+      }
+
+      // Auto-respuestas solo para mensajes de texto
+      if (message.type === "chat") {
+        await handleAutoResponses(message);
+      }
+    } catch (error) {
+      logger.error(`Error procesando mensaje tipo ${message.type}:`, error);
+    }
+  }
+
+  /**
+   * Procesar mensaje de imagen
+   */
+  async function processImageMessage(message) {
+    try {
+      const media = await message.downloadMedia();
+      if (media) {
+        const filename = `image_${Date.now()}_${message.id._serialized.replace(
+          /[^a-zA-Z0-9]/g,
+          "_"
+        )}.${media.mimetype.split("/")[1]}`;
+        const filepath = path.join("./received_media/images", filename);
+
+        // Guardar imagen
+        fs.writeFileSync(filepath, media.data, "base64");
+
+        return {
+          mediaInfo: {
+            filename: filename,
+            filepath: filepath,
+            mimetype: media.mimetype,
+            filesize: Buffer.byteLength(media.data, "base64"),
+            caption: message.body || null,
+          },
+        };
+      }
+    } catch (error) {
+      logger.error("Error descargando imagen:", error);
+      return { error: "Error al descargar imagen" };
+    }
+    return {};
+  }
+
+  /**
+   * Procesar mensaje de documento
+   */
+  async function processDocumentMessage(message) {
+    try {
+      const media = await message.downloadMedia();
+      if (media) {
+        // Obtener extensión del tipo MIME o nombre original
+        let extension = media.mimetype.split("/")[1];
+        if (message._data && message._data.filename) {
+          const originalExt = path.extname(message._data.filename);
+          if (originalExt) extension = originalExt.substring(1);
+        }
+
+        const filename = `document_${Date.now()}_${message.id._serialized.replace(
+          /[^a-zA-Z0-9]/g,
+          "_"
+        )}.${extension}`;
+        const filepath = path.join("./received_media/documents", filename);
+
+        // Guardar documento
+        fs.writeFileSync(filepath, media.data, "base64");
+
+        return {
+          mediaInfo: {
+            filename: filename,
+            originalName: message._data?.filename || "unknown",
+            filepath: filepath,
+            mimetype: media.mimetype,
+            filesize: Buffer.byteLength(media.data, "base64"),
+            caption: message.body || null,
+          },
+        };
+      }
+    } catch (error) {
+      logger.error("Error descargando documento:", error);
+      return { error: "Error al descargar documento" };
+    }
+    return {};
+  }
+
+  /**
+   * Procesar mensaje de audio/nota de voz
+   */
+  async function processAudioMessage(message) {
+    try {
+      const media = await message.downloadMedia();
+      if (media) {
+        const isVoiceNote = message.type === "ptt";
+        const prefix = isVoiceNote ? "voice_note" : "audio";
+        const extension = media.mimetype.includes("ogg") ? "ogg" : "mp3";
+        const filename = `${prefix}_${Date.now()}_${message.id._serialized.replace(
+          /[^a-zA-Z0-9]/g,
+          "_"
+        )}.${extension}`;
+        const filepath = path.join("./received_media/audio", filename);
+
+        // Guardar audio
+        fs.writeFileSync(filepath, media.data, "base64");
+
+        return {
+          mediaInfo: {
+            filename: filename,
+            filepath: filepath,
+            mimetype: media.mimetype,
+            filesize: Buffer.byteLength(media.data, "base64"),
+            isVoiceNote: isVoiceNote,
+            duration: message._data?.duration || null,
+          },
+        };
+      }
+    } catch (error) {
+      logger.error("Error descargando audio:", error);
+      return { error: "Error al descargar audio" };
+    }
+    return {};
+  }
+
+  /**
+   * Procesar mensaje de video
+   */
+  async function processVideoMessage(message) {
+    try {
+      const media = await message.downloadMedia();
+      if (media) {
+        const extension = media.mimetype.split("/")[1];
+        const filename = `video_${Date.now()}_${message.id._serialized.replace(
+          /[^a-zA-Z0-9]/g,
+          "_"
+        )}.${extension}`;
+        const filepath = path.join("./received_media/videos", filename);
+
+        // Guardar video
+        fs.writeFileSync(filepath, media.data, "base64");
+
+        return {
+          mediaInfo: {
+            filename: filename,
+            filepath: filepath,
+            mimetype: media.mimetype,
+            filesize: Buffer.byteLength(media.data, "base64"),
+            caption: message.body || null,
+            duration: message._data?.duration || null,
+          },
+        };
+      }
+    } catch (error) {
+      logger.error("Error descargando video:", error);
+      return { error: "Error al descargar video" };
+    }
+    return {};
+  }
+
+  /**
+   * Procesar sticker
+   */
+  async function processStickerMessage(message) {
+    try {
+      const media = await message.downloadMedia();
+      if (media) {
+        const extension = media.mimetype.includes("webp") ? "webp" : "png";
+        const filename = `sticker_${Date.now()}_${message.id._serialized.replace(
+          /[^a-zA-Z0-9]/g,
+          "_"
+        )}.${extension}`;
+        const filepath = path.join("./received_media/stickers", filename);
+
+        // Guardar sticker
+        fs.writeFileSync(filepath, media.data, "base64");
+
+        return {
+          mediaInfo: {
+            filename: filename,
+            filepath: filepath,
+            mimetype: media.mimetype,
+            filesize: Buffer.byteLength(media.data, "base64"),
+            isAnimated: media.mimetype.includes("webp"),
+          },
+        };
+      }
+    } catch (error) {
+      logger.error("Error descargando sticker:", error);
+      return { error: "Error al descargar sticker" };
+    }
+    return {};
+  }
+
+  /**
+   * Procesar mensaje de ubicación
+   */
+  function processLocationMessage(message) {
+    try {
+      const location = message.location;
+      if (location) {
+        return {
+          locationInfo: {
+            latitude: location.latitude,
+            longitude: location.longitude,
+            description: location.description || null,
+            name: message.body || null,
+            googleMapsUrl: `https://www.google.com/maps?q=${location.latitude},${location.longitude}`,
+          },
+        };
+      }
+    } catch (error) {
+      logger.error("Error procesando ubicación:", error);
+    }
+    return {};
+  }
+
+  /**
+   * Procesar mensaje de contacto
+   */
+  function processContactMessage(message) {
+    try {
+      const vcard = message.vCards && message.vCards[0];
+      if (vcard) {
+        return {
+          contactInfo: {
+            vcard: vcard,
+            name: vcard.displayName || "Sin nombre",
+            phone: vcard.waid ? `+${vcard.waid}` : null,
+            formattedName: vcard.fn || null,
+            organization: vcard.org || null,
+          },
+        };
+      }
+    } catch (error) {
+      logger.error("Error procesando contacto:", error);
+    }
+    return {};
+  }
+
+  /**
+   * Procesar múltiples contactos
+   */
+  function processMultiContactMessage(message) {
+    try {
+      const vcards = message.vCards || [];
+      const contacts = vcards.map((vcard) => ({
+        name: vcard.displayName || "Sin nombre",
+        phone: vcard.waid ? `+${vcard.waid}` : null,
+        formattedName: vcard.fn || null,
+        organization: vcard.org || null,
+      }));
+
+      return {
+        contactsInfo: {
+          count: contacts.length,
+          contacts: contacts,
+        },
+      };
+    } catch (error) {
+      logger.error("Error procesando múltiples contactos:", error);
+    }
+    return {};
+  }
 
   /**
    * Detectar cuando alguien se conecta/desconecta
@@ -832,11 +1207,334 @@ app.post(
 );
 
 /**
- * Obtener información de un chat (individual o grupo)
- * @route GET /chat/:number
- * @param {string} number - Número de teléfono o ID del grupo
- * @returns {Object} Información del chat
+ * Enviar audio o nota de voz
+ * @route POST /send/audio
+ * @param {string} number - Número de teléfono
+ * @param {string} caption - Texto que acompaña el audio (opcional)
+ * @param {boolean} isVoiceNote - Si debe enviarse como nota de voz (opcional, default: true)
+ * @param {file} audio - Archivo de audio
+ * @returns {Object} Resultado del envío
  */
+app.post(
+  "/send/audio",
+  basicAuth,
+  checkClientReady,
+  upload.single("audio"),
+  async (req, res) => {
+    try {
+      const { number, caption = "", isVoiceNote = "true" } = req.body;
+
+      if (!number || !req.file) {
+        return res.status(400).json({
+          success: false,
+          error: "Parámetros requeridos: number, audio (archivo)",
+          code: "MISSING_PARAMS",
+        });
+      }
+
+      const media = MessageMedia.fromFilePath(req.file.path);
+      const chatId = `${number}@c.us`;
+
+      // Configurar opciones para nota de voz
+      const options = {
+        caption: caption || undefined,
+        sendAudioAsVoice: isVoiceNote === "true",
+      };
+
+      const result = await client.sendMessage(chatId, media, options);
+
+      // Eliminar archivo temporal
+      fs.unlinkSync(req.file.path);
+
+      const audioType = isVoiceNote === "true" ? "nota de voz" : "audio";
+      logger.info(`${audioType} enviado a ${number} con caption: ${caption}`);
+
+      res.json({
+        success: true,
+        message: `${audioType} enviado correctamente`,
+        messageId: result.id._serialized,
+        to: number,
+        caption: caption,
+        sentAsVoiceNote: isVoiceNote === "true",
+      });
+    } catch (error) {
+      logger.error("Error enviando audio:", error);
+
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+
+      res.status(500).json({
+        success: false,
+        error: "Error interno del servidor",
+        code: "SEND_AUDIO_ERROR",
+        details: error.message,
+      });
+    }
+  }
+);
+
+/**
+ * Enviar video con texto
+ * @route POST /send/video
+ * @param {string} number - Número de teléfono
+ * @param {string} caption - Texto que acompaña el video (opcional)
+ * @param {file} video - Archivo de video
+ * @returns {Object} Resultado del envío
+ */
+app.post(
+  "/send/video",
+  basicAuth,
+  checkClientReady,
+  upload.single("video"),
+  async (req, res) => {
+    try {
+      const { number, caption = "" } = req.body;
+
+      if (!number || !req.file) {
+        return res.status(400).json({
+          success: false,
+          error: "Parámetros requeridos: number, video (archivo)",
+          code: "MISSING_PARAMS",
+        });
+      }
+
+      const media = MessageMedia.fromFilePath(req.file.path);
+      const chatId = `${number}@c.us`;
+
+      const result = await client.sendMessage(chatId, media, {
+        caption: caption || undefined,
+      });
+
+      // Eliminar archivo temporal
+      fs.unlinkSync(req.file.path);
+
+      logger.info(`Video enviado a ${number} con caption: ${caption}`);
+
+      res.json({
+        success: true,
+        message: "Video enviado correctamente",
+        messageId: result.id._serialized,
+        to: number,
+        caption: caption,
+      });
+    } catch (error) {
+      logger.error("Error enviando video:", error);
+
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+
+      res.status(500).json({
+        success: false,
+        error: "Error interno del servidor",
+        code: "SEND_VIDEO_ERROR",
+        details: error.message,
+      });
+    }
+  }
+);
+
+/**
+ * Enviar ubicación
+ * @route POST /send/location
+ * @param {string} number - Número de teléfono
+ * @param {number} latitude - Latitud (requerido)
+ * @param {number} longitude - Longitud (requerido)
+ * @param {string} name - Nombre del lugar (opcional)
+ * @param {string} address - Dirección (opcional)
+ * @returns {Object} Resultado del envío
+ */
+app.post("/send/location", basicAuth, checkClientReady, async (req, res) => {
+  try {
+    const { number, latitude, longitude, name = "", address = "" } = req.body;
+
+    if (!number || latitude === undefined || longitude === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: "Parámetros requeridos: number, latitude, longitude",
+        code: "MISSING_PARAMS",
+      });
+    }
+
+    // Validar coordenadas
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
+
+    if (
+      isNaN(lat) ||
+      isNaN(lng) ||
+      lat < -90 ||
+      lat > 90 ||
+      lng < -180 ||
+      lng > 180
+    ) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Coordenadas inválidas. Latitude: -90 a 90, Longitude: -180 a 180",
+        code: "INVALID_COORDINATES",
+      });
+    }
+
+    const chatId = `${number}@c.us`;
+
+    // Crear objeto de ubicación
+    const location = new Location(lat, lng, name, address);
+    const result = await client.sendMessage(chatId, location);
+
+    logger.info(`Ubicación enviada a ${number}: ${lat}, ${lng} - ${name}`);
+
+    res.json({
+      success: true,
+      message: "Ubicación enviada correctamente",
+      messageId: result.id._serialized,
+      to: number,
+      location: {
+        latitude: lat,
+        longitude: lng,
+        name: name,
+        address: address,
+        googleMapsUrl: `https://www.google.com/maps?q=${lat},${lng}`,
+      },
+    });
+  } catch (error) {
+    logger.error("Error enviando ubicación:", error);
+    res.status(500).json({
+      success: false,
+      error: "Error interno del servidor",
+      code: "SEND_LOCATION_ERROR",
+      details: error.message,
+    });
+  }
+});
+
+/**
+ * Enviar contacto
+ * @route POST /send/contact
+ * @param {string} number - Número de teléfono
+ * @param {string} contactName - Nombre del contacto (requerido)
+ * @param {string} contactNumber - Número del contacto (requerido)
+ * @param {string} organization - Organización (opcional)
+ * @returns {Object} Resultado del envío
+ */
+app.post("/send/contact", basicAuth, checkClientReady, async (req, res) => {
+  try {
+    const { number, contactName, contactNumber, organization = "" } = req.body;
+
+    if (!number || !contactName || !contactNumber) {
+      return res.status(400).json({
+        success: false,
+        error: "Parámetros requeridos: number, contactName, contactNumber",
+        code: "MISSING_PARAMS",
+      });
+    }
+
+    const chatId = `${number}@c.us`;
+
+    // Limpiar número de contacto (quitar caracteres especiales)
+    const cleanContactNumber = contactNumber.replace(/[^\d+]/g, "");
+
+    // Crear vCard
+    const vcard =
+      `BEGIN:VCARD\n` +
+      `VERSION:3.0\n` +
+      `FN:${contactName}\n` +
+      `TEL;TYPE=CELL:${cleanContactNumber}\n` +
+      (organization ? `ORG:${organization}\n` : "") +
+      `END:VCARD`;
+
+    const contact = new MessageMedia(
+      "text/vcard",
+      Buffer.from(vcard).toString("base64"),
+      `${contactName}.vcf`
+    );
+    const result = await client.sendMessage(chatId, contact);
+
+    logger.info(
+      `Contacto enviado a ${number}: ${contactName} - ${cleanContactNumber}`
+    );
+
+    res.json({
+      success: true,
+      message: "Contacto enviado correctamente",
+      messageId: result.id._serialized,
+      to: number,
+      contact: {
+        name: contactName,
+        number: cleanContactNumber,
+        organization: organization,
+      },
+    });
+  } catch (error) {
+    logger.error("Error enviando contacto:", error);
+    res.status(500).json({
+      success: false,
+      error: "Error interno del servidor",
+      code: "SEND_CONTACT_ERROR",
+      details: error.message,
+    });
+  }
+});
+
+/**
+ * Enviar sticker
+ * @route POST /send/sticker
+ * @param {string} number - Número de teléfono
+ * @param {file} sticker - Archivo de sticker (imagen)
+ * @returns {Object} Resultado del envío
+ */
+app.post(
+  "/send/sticker",
+  basicAuth,
+  checkClientReady,
+  upload.single("sticker"),
+  async (req, res) => {
+    try {
+      const { number } = req.body;
+
+      if (!number || !req.file) {
+        return res.status(400).json({
+          success: false,
+          error: "Parámetros requeridos: number, sticker (archivo de imagen)",
+          code: "MISSING_PARAMS",
+        });
+      }
+
+      const media = MessageMedia.fromFilePath(req.file.path);
+      const chatId = `${number}@c.us`;
+
+      const result = await client.sendMessage(chatId, media, {
+        sendMediaAsSticker: true,
+      });
+
+      // Eliminar archivo temporal
+      fs.unlinkSync(req.file.path);
+
+      logger.info(`Sticker enviado a ${number}`);
+
+      res.json({
+        success: true,
+        message: "Sticker enviado correctamente",
+        messageId: result.id._serialized,
+        to: number,
+      });
+    } catch (error) {
+      logger.error("Error enviando sticker:", error);
+
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+
+      res.status(500).json({
+        success: false,
+        error: "Error interno del servidor",
+        code: "SEND_STICKER_ERROR",
+        details: error.message,
+      });
+    }
+  }
+);
 app.get("/chat/:number", basicAuth, checkClientReady, async (req, res) => {
   try {
     const { number } = req.params;
