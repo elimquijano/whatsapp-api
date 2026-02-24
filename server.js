@@ -70,11 +70,11 @@ app.post("/api/whatsapp/connect", authenticateToken, checkPlanExpiration, async 
 
     const activeSessions = sessionManager.getUserSessions(user.id);
     const maxSessions = user.planData?.maxSessions || 1;
+    const bodySessionId = req.body ? req.body.sessionId : null;
 
     if (activeSessions.length >= maxSessions) {
       // Si ya tiene el máximo, pero intenta reconectar una existente que no está "open", se lo permitimos
-      const { sessionId } = req.body;
-      if (!sessionId || !activeSessions.find(s => s.sessionId === sessionId)) {
+      if (!bodySessionId || !activeSessions.find(s => s.sessionId === bodySessionId)) {
         return res.status(403).json({ 
           success: false, 
           error: `Has alcanzado el límite de ${maxSessions} sesión(es) para tu plan ${user.planData?.name || 'Gratis'}.` 
@@ -82,11 +82,19 @@ app.post("/api/whatsapp/connect", authenticateToken, checkPlanExpiration, async 
       }
     }
 
-    const sessionId = req.body.sessionId || crypto.randomBytes(4).toString("hex");
+    const sessionId = bodySessionId || crypto.randomBytes(4).toString("hex");
     const session = await sessionManager.createSession(user.id, sessionId);
     
-    res.json({ success: true, status: session.status, hasQR: !!session.qrDataUrl, sessionId });
+    if (!session) throw new Error("No se pudo crear o recuperar la sesión");
+
+    res.json({ 
+      success: true, 
+      status: session.status || 'connecting', 
+      hasQR: !!session.qrDataUrl, 
+      sessionId: session.sessionId || sessionId 
+    });
   } catch (error) {
+    console.error("Error en connect:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

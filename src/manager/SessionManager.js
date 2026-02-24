@@ -1,11 +1,9 @@
-import pkg from "@whiskeysockets/baileys";
-const {
-  makeWASocket,
+import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-} = pkg.default || pkg; // Fix for different Baileys versions
+} from "@whiskeysockets/baileys";
 
 import fs from "fs";
 import path from "path";
@@ -41,7 +39,13 @@ class SessionManager {
     }
 
     const sessionDir = path.join(__dirname, "../../sessions", `auth_${userId}_${sessionId}`);
-    if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
+    try {
+      if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir, { recursive: true });
+      }
+    } catch (e) {
+      this.logger.error("Error creando directorio de sesión:", e);
+    }
 
     try {
       const { state, saveCreds } = await useMultiFileAuthState(sessionDir);

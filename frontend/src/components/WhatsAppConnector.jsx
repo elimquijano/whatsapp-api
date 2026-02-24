@@ -110,7 +110,7 @@ const WhatsAppConnector = () => {
         </Paper>
       ) : (
         <Grid container spacing={3}>
-          {sessions.map((session) => (
+          {sessions.filter(s => s && s.sessionId).map((session) => (
             <Grid item xs={12} sm={6} key={session.sessionId}>
               <Card elevation={2} sx={{ borderRadius: 3 }}>
                 <CardContent>

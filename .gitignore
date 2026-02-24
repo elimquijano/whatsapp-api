@@ -14,6 +14,7 @@ logs/
 # WhatsApp session
 .wwebjs_auth/
 .wwebjs_cache/
+sessions/
 
 # Uploads y archivos recibidos (archivos temporales)
 uploads/
