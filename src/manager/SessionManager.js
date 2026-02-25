@@ -108,6 +108,12 @@ class SessionManager {
           const user = await User.findByPk(userId);
           if (!user || !user.webhookUrl) return;
 
+          // Verificar expiración del plan
+          if (user.expirationDate && new Date() > new Date(user.expirationDate)) {
+            this.logger.warn(`⛔ Plan expirado para usuario ${userId}. Webhook bloqueado.`);
+            return;
+          }
+
           for (const msg of messages) {
             if (!msg.message) continue; // Skip updates without message content
 
@@ -161,6 +167,25 @@ class SessionManager {
       const session = userSessions.get(sessionId);
       try { await session.sock.logout(); } catch (e) {}
       userSessions.delete(sessionId);
+    }
+  }
+
+  async cleanupExpiredSessions() {
+    this.logger.info("🧹 Ejecutando limpieza de sesiones expiradas...");
+    for (const [userId, userSessions] of this.sessions.entries()) {
+      try {
+        const user = await User.findByPk(userId);
+        if (user && user.expirationDate && new Date() > new Date(user.expirationDate)) {
+          this.logger.warn(`⛔ Usuario ${userId} expirado. Cerrando ${userSessions.size} sesiones.`);
+          for (const [sessionId, session] of userSessions.entries()) {
+            try { await session.sock.logout(); } catch (e) {}
+            userSessions.delete(sessionId);
+          }
+          this.sessions.delete(userId);
+        }
+      } catch (error) {
+        this.logger.error(`Error limpiando sesiones de usuario ${userId}:`, error);
+      }
     }
   }
 }

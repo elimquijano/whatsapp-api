@@ -97,8 +97,18 @@ export const createUser = async (req, res) => {
     const { username, whatsappNumber, password, roleId, planId, expirationDate } = req.body;
     
     // Validar campos requeridos
-    if (!username || !whatsappNumber || !password || !roleId) {
-      return res.status(400).json({ success: false, error: "Username, WhatsApp Number, Password y Role son obligatorios" });
+    const missing = [];
+    if (!username) missing.push("Username");
+    if (!whatsappNumber) missing.push("WhatsApp Number");
+    if (!password) missing.push("Password");
+    if (!roleId) missing.push("Role");
+
+    if (missing.length > 0) {
+      console.log("❌ Intento de creación de usuario fallido. Faltan:", missing.join(", "));
+      return res.status(400).json({ 
+        success: false, 
+        error: `Los siguientes campos son obligatorios: ${missing.join(", ")}` 
+      });
     }
 
     const whatsappSessionId = crypto.randomBytes(8).toString("hex");

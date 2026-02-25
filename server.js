@@ -242,9 +242,9 @@ const startServer = async () => {
     });
 
     // FORZAR ACTUALIZACIÓN DE LÓGICA COMERCIAL
-    await trialPlan.update({ features: ["text", "media", "files"] });
+    await trialPlan.update({ features: ["text", "media", "files", "webhook"] });
     await basicPlan.update({ features: ["text"] });
-    await proPlan.update({ features: ["text", "media", "files"] });
+    await proPlan.update({ features: ["text", "media", "files", "webhook"] });
 
     const userCount = await User.count();
     if (userCount === 0) {
@@ -266,6 +266,11 @@ const startServer = async () => {
         console.log("✅ Plan 'Gratis' asignado al administrador existente.");
       }
     }
+
+    // Tarea programada: Limpiar sesiones expiradas cada hora
+    setInterval(() => {
+      sessionManager.cleanupExpiredSessions();
+    }, 60 * 60 * 1000);
 
     app.listen(port, "0.0.0.0", () => {
       console.log(`🚀 Servidor SaaS en puerto ${port}`);

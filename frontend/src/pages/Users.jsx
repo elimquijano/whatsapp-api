@@ -86,7 +86,14 @@ const Users = () => {
       });
     } else {
       setEditingId(null);
-      setFormData({ username: '', whatsappNumber: '', password: '', roleId: '', planId: '', expirationDate: '' });
+      setFormData({ 
+        username: '', 
+        whatsappNumber: '', 
+        password: '', 
+        roleId: roles.find(r => r.name === 'user')?.id || '', 
+        planId: '', 
+        expirationDate: '' 
+      });
     }
     setOpen(true);
     setFormError('');

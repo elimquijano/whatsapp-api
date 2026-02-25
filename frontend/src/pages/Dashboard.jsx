@@ -3,7 +3,7 @@ import {
   Container, Grid, Typography, Box, Paper,
   List, ListItem, ListItemIcon, ListItemText, Divider,
   AppBar, Toolbar, IconButton, Avatar, Menu, MenuItem, Tooltip,
-  ListItemButton, useTheme, TextField
+  ListItemButton, useTheme, TextField, Button, Alert, CircularProgress
 } from '@mui/material';
 import {
   Dashboard as DashboardIcon,
@@ -13,7 +13,9 @@ import {
   Code as CodeIcon,
   Visibility,
   VisibilityOff,
-  ContentCopy
+  ContentCopy,
+  Webhook as WebhookIcon,
+  Save
 } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, useLocation, Routes, Route, Navigate } from 'react-router-dom';
@@ -21,6 +23,7 @@ import WhatsAppConnector from '../components/WhatsAppConnector';
 import MessageSender from '../components/MessageSender';
 import ApiConsole from '../components/ApiConsole';
 import Users from './Users';
+import axios from 'axios';
 
 // Minimalist API Key Component
 const ApiKeyDisplay = () => {
@@ -78,9 +81,72 @@ const ApiKeyDisplay = () => {
   );
 };
 
+const WebhookConfig = ({ currentUrl }) => {
+  const [url, setUrl] = useState(currentUrl || '');
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const handleSave = async () => {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const token = localStorage.getItem('token');
+      await axios.put('/api/users/webhook', { webhookUrl: url }, { headers: { Authorization: `Bearer ${token}` } });
+      setMsg({ type: 'success', text: 'Webhook actualizado correctamente' });
+    } catch (err) {
+      setMsg({ type: 'error', text: err.response?.data?.error || 'Error al guardar' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Paper sx={{ p: 4, borderRadius: 4, bgcolor: 'white', mt: 4 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+        <WebhookIcon sx={{ mr: 1, color: '#f59e0b' }} />
+        <Typography variant="h6" sx={{ fontWeight: 800, color: '#1e293b' }}>Configuración Webhook</Typography>
+      </Box>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+        Recibe notificaciones en tiempo real cuando lleguen mensajes a tu número.
+      </Typography>
+      
+      <Grid container spacing={2} alignItems="center">
+        <Grid item xs={12} md={9}>
+           <TextField 
+             fullWidth 
+             label="URL del Webhook (https://...)" 
+             variant="outlined" 
+             value={url}
+             onChange={(e) => setUrl(e.target.value)}
+             size="small"
+           />
+        </Grid>
+        <Grid item xs={12} md={3}>
+           <Button 
+             fullWidth 
+             variant="contained" 
+             startIcon={loading ? <CircularProgress size={20} color="inherit"/> : <Save />}
+             onClick={handleSave}
+             disabled={loading}
+             sx={{ bgcolor: '#0f172a', fontWeight: 700 }}
+           >
+             Guardar
+           </Button>
+        </Grid>
+      </Grid>
+      {msg && <Alert severity={msg.type} sx={{ mt: 2 }}>{msg.text}</Alert>}
+    </Paper>
+  );
+};
+
 const DashboardHome = ({ user }) => (
   <Grid container spacing={4}>
-    <Grid item xs={12} lg={8}><WhatsAppConnector /></Grid>
+    <Grid item xs={12} lg={8}>
+      <WhatsAppConnector />
+      {user?.planData?.features?.includes('webhook') && (
+        <WebhookConfig currentUrl={user?.webhookUrl} />
+      )}
+    </Grid>
     <Grid item xs={12} lg={4}>
       <MessageSender />
       <Paper sx={{ p: 4, mt: 4, borderRadius: 4, bgcolor: '#1e293b', color: 'white' }}>
