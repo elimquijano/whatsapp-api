@@ -199,6 +199,9 @@ const startServer = async () => {
     await sequelize.sync({ alter: true });
     console.log("📊 Base de datos sincronizada.");
 
+    // Restaurar sesiones persistentes de WhatsApp
+    await sessionManager.restoreSessions();
+
     // CREACIÓN DE ROLES ROBUSTA
     const [adminRole] = await Role.findOrCreate({ 
       where: { name: "admin" }, 
