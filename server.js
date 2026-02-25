@@ -52,9 +52,11 @@ const checkPlanExpiration = async (req, res, next) => {
 };
 
 app.post("/api/auth/login", authController.login);
+app.post("/api/auth/send-otp", authController.sendOTP);
 app.post("/api/auth/register", authController.register);
 
 app.get("/api/users/profile", authenticateToken, userController.getProfile);
+app.put("/api/users/webhook", authenticateToken, userController.updateWebhook);
 app.get("/api/users", authenticateToken, isAdmin, userController.getAllUsers);
 app.post("/api/users", authenticateToken, isAdmin, userController.createUser);
 app.put("/api/users/:id", authenticateToken, isAdmin, userController.updateUser);
@@ -131,25 +133,45 @@ app.get("/api/whatsapp/status/:sessionId", authenticateToken, async (req, res) =
   }
 });
 
-app.post("/api/whatsapp/send-text", authenticateToken, checkPlanExpiration, async (req, res) => {
-  const { number, message, sessionId } = req.body;
-  
-  // Si no envía sessionId, intentamos usar la primera sesión abierta que tenga
-  let session;
-  if (sessionId) {
-    session = sessionManager.getSession(req.user.id, sessionId);
-  } else {
-    session = sessionManager.getUserSessions(req.user.id).find(s => s.status === 'open');
-  }
-
-  if (!session || session.status !== "open") {
-    return res.status(503).json({ success: false, error: "Sesión de WhatsApp no está conectada" });
-  }
+// API V1 - MESSAGING CORE
+app.post("/api/v1/messages/text", authenticateToken, checkPlanExpiration, async (req, res) => {
+  const { recipient, body, account_id } = req.body;
+  const session = account_id ? sessionManager.getSession(req.user.id, account_id) : sessionManager.getUserSessions(req.user.id).find(s => s.status === 'open');
+  if (!session) return res.status(404).json({ success: false, error: "Active account not found." });
 
   try {
-    const jid = `${number}@s.whatsapp.net`;
-    const result = await session.sock.sendMessage(jid, { text: message });
-    res.json({ success: true, messageId: result.key.id });
+    const result = await session.sock.sendMessage(`${recipient}@s.whatsapp.net`, { text: body });
+    res.json({ success: true, message_id: result.key.id, status: "sent" });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/v1/messages/media", authenticateToken, checkPlanExpiration, async (req, res) => {
+  try {
+    const user = await User.findByPk(req.user.id, { include: [{ model: Plan, as: 'planData' }] });
+    if (!user.planData?.features.includes("media")) return res.status(403).json({ success: false, error: "Upgrade required for media messaging." });
+
+    const { recipient, type, payload, caption, filename, account_id } = req.body;
+    const session = account_id ? sessionManager.getSession(req.user.id, account_id) : sessionManager.getUserSessions(req.user.id).find(s => s.status === 'open');
+    if (!session) return res.status(404).json({ success: false, error: "Active account not found." });
+
+    let mediaSource;
+    if (payload.startsWith('data:') && payload.includes(';base64,')) {
+      const base64Data = payload.split(';base64,').pop();
+      mediaSource = Buffer.from(base64Data, 'base64');
+    } else {
+      mediaSource = { url: payload };
+    }
+
+    let msgConfig = {};
+    if (type === 'image') msgConfig = { image: mediaSource, caption };
+    else if (type === 'video') msgConfig = { video: mediaSource, caption };
+    else if (type === 'document') msgConfig = { document: mediaSource, fileName: filename || 'file', mimetype: 'application/octet-stream' };
+    else if (type === 'audio') msgConfig = { audio: mediaSource, ptt: true };
+
+    const result = await session.sock.sendMessage(`${recipient}@s.whatsapp.net`, msgConfig);
+    res.json({ success: true, message_id: result.key.id, status: "sent" });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -174,7 +196,7 @@ const startServer = async () => {
     await sequelize.authenticate();
     console.log("✅ Conexión a MySQL establecida.");
 
-    await sequelize.sync({ force: false });
+    await sequelize.sync({ alter: true });
     console.log("📊 Base de datos sincronizada.");
 
     // CREACIÓN DE ROLES ROBUSTA
@@ -188,25 +210,50 @@ const startServer = async () => {
       defaults: { name: "user", permissions: ["whatsapp"] } 
     });
 
-    // CREACIÓN DE PLANES POR DEFECTO
-    const [freePlan] = await Plan.findOrCreate({
-      where: { name: "Gratis" },
-      defaults: { name: "Gratis", maxSessions: 1, price: 0, features: ["1 Sesión"] }
+    // CONFIGURACIÓN DE PLANES COMERCIALES
+    const [trialPlan] = await Plan.findOrCreate({
+      where: { name: "Trial" },
+      defaults: { 
+        name: "Trial", 
+        maxSessions: 1, 
+        price: 0, 
+        features: ["text", "media", "files"] 
+      }
     });
 
-    await Plan.findOrCreate({
-      where: { name: "Premium" },
-      defaults: { name: "Premium", maxSessions: 5, price: 10, features: ["5 Sesiones", "Soporte Prioritario"] }
+    const [basicPlan] = await Plan.findOrCreate({
+      where: { name: "Basic" },
+      defaults: { 
+        name: "Basic", 
+        maxSessions: 1, 
+        price: 3, 
+        features: ["text"] 
+      }
     });
+
+    const [proPlan] = await Plan.findOrCreate({
+      where: { name: "Professional" },
+      defaults: { 
+        name: "Professional", 
+        maxSessions: 5, // Un límite técnico razonable pero no comercializado
+        price: 7, 
+        features: ["text", "media", "files"] 
+      }
+    });
+
+    // FORZAR ACTUALIZACIÓN DE LÓGICA COMERCIAL
+    await trialPlan.update({ features: ["text", "media", "files"] });
+    await basicPlan.update({ features: ["text"] });
+    await proPlan.update({ features: ["text", "media", "files"] });
 
     const userCount = await User.count();
     if (userCount === 0) {
       await User.create({
         username: process.env.INITIAL_ADMIN_USERNAME || "admin",
-        email: process.env.INITIAL_ADMIN_EMAIL || "admin@example.com",
+        whatsappNumber: process.env.INITIAL_ADMIN_WHATSAPP || "5215500000000",
         password: process.env.INITIAL_ADMIN_PASSWORD || "admin_password_123",
         roleId: adminRole.id,
-        planId: freePlan.id,
+        planId: trialPlan.id,
         whatsappSessionId: "admin_session_root"
       });
       console.log(`👤 Usuario admin creado: ${process.env.INITIAL_ADMIN_USERNAME || "admin"}`);
@@ -214,7 +261,7 @@ const startServer = async () => {
       // Si ya existe, aseguramos que tenga un plan para evitar errores
       const admin = await User.findOne({ where: { username: process.env.INITIAL_ADMIN_USERNAME || "admin" } });
       if (admin && !admin.planId) {
-        admin.planId = freePlan.id;
+        admin.planId = trialPlan.id;
         await admin.save();
         console.log("✅ Plan 'Gratis' asignado al administrador existente.");
       }

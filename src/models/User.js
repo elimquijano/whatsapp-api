@@ -15,11 +15,10 @@ const User = sequelize.define("User", {
     allowNull: false,
     unique: true,
   },
-  email: {
+  whatsappNumber: {
     type: DataTypes.STRING,
     allowNull: false,
     unique: true,
-    validate: { isEmail: true },
   },
   password: {
     type: DataTypes.STRING,
@@ -41,6 +40,10 @@ const User = sequelize.define("User", {
   },
   expirationDate: {
     type: DataTypes.DATE,
+    allowNull: true,
+  },
+  webhookUrl: {
+    type: DataTypes.STRING,
     allowNull: true,
   },
 }, {

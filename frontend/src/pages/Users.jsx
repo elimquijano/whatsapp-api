@@ -7,15 +7,13 @@ import {
   Tooltip, Card, Grid, InputAdornment, Avatar
 } from '@mui/material';
 import {
-  Add, Delete, Edit, PersonAdd, Person, Email,
+  Add, Delete, Edit, PersonAdd, Person, WhatsApp,
   Shield, AdminPanelSettings, Search,
-  ContactPage as BadgeIcon, ArrowBack
+  ContactPage as BadgeIcon
 } from '@mui/icons-material';
 import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
 
 const Users = () => {
-  const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [plans, setPlans] = useState([]);
@@ -30,7 +28,7 @@ const Users = () => {
   const [formError, setFormError] = useState('');
   const [formData, setFormData] = useState({
     username: '',
-    email: '',
+    whatsappNumber: '',
     password: '',
     roleId: '',
     planId: '',
@@ -39,7 +37,8 @@ const Users = () => {
 
   const fetchUsers = async () => {
     try {
-      const res = await axios.get('/api/users');
+      const token = localStorage.getItem('token');
+      const res = await axios.get('/api/users', { headers: { Authorization: `Bearer ${token}` } });
       setUsers(Array.isArray(res.data.users) ? res.data.users : []);
     } catch (err) {
       setError('Error al cargar usuarios');
@@ -50,7 +49,8 @@ const Users = () => {
 
   const fetchRoles = async () => {
     try {
-      const res = await axios.get('/api/roles');
+      const token = localStorage.getItem('token');
+      const res = await axios.get('/api/roles', { headers: { Authorization: `Bearer ${token}` } });
       setRoles(Array.isArray(res.data.roles) ? res.data.roles : []);
     } catch (err) {
       console.error("Error al cargar roles", err);
@@ -59,7 +59,8 @@ const Users = () => {
 
   const fetchPlans = async () => {
     try {
-      const res = await axios.get('/api/plans');
+      const token = localStorage.getItem('token');
+      const res = await axios.get('/api/plans', { headers: { Authorization: `Bearer ${token}` } });
       setPlans(Array.isArray(res.data.plans) ? res.data.plans : []);
     } catch (err) {
       console.error("Error al cargar planes", err);
@@ -77,7 +78,7 @@ const Users = () => {
       setEditingId(user.id);
       setFormData({
         username: user.username,
-        email: user.email,
+        whatsappNumber: user.whatsappNumber || '',
         password: '', // Dejar vacío para no cambiar si no se desea
         roleId: user.roleId,
         planId: user.planId || '',
@@ -85,7 +86,7 @@ const Users = () => {
       });
     } else {
       setEditingId(null);
-      setFormData({ username: '', email: '', password: '', roleId: '', planId: '', expirationDate: '' });
+      setFormData({ username: '', whatsappNumber: '', password: '', roleId: '', planId: '', expirationDate: '' });
     }
     setOpen(true);
     setFormError('');
@@ -104,11 +105,12 @@ const Users = () => {
     e.preventDefault();
     setFormLoading(true);
     setFormError('');
+    const token = localStorage.getItem('token');
     try {
       if (editingId) {
-        await axios.put(`/api/users/${editingId}`, formData);
+        await axios.put(`/api/users/${editingId}`, formData, { headers: { Authorization: `Bearer ${token}` } });
       } else {
-        await axios.post('/api/users', formData);
+        await axios.post('/api/users', formData, { headers: { Authorization: `Bearer ${token}` } });
       }
       fetchUsers();
       handleClose();
@@ -121,8 +123,9 @@ const Users = () => {
 
   const handleDelete = async (id) => {
     if (!window.confirm('¿Estás seguro de eliminar este usuario?')) return;
+    const token = localStorage.getItem('token');
     try {
-      await axios.delete(`/api/users/${id}`);
+      await axios.delete(`/api/users/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       fetchUsers();
     } catch (err) {
       alert(err.response?.data?.error || 'Error al eliminar');
@@ -131,26 +134,21 @@ const Users = () => {
 
   const filteredUsers = users.filter(u => 
     (u.username || '').toLowerCase().includes(search.toLowerCase()) || 
-    (u.email || '').toLowerCase().includes(search.toLowerCase())
+    (u.whatsappNumber || '').includes(search)
   );
 
   if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', p: 5 }}><CircularProgress /></Box>;
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+    <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-          <IconButton onClick={() => navigate('/')} sx={{ mr: 2, bgcolor: 'white', boxShadow: 1 }}>
-            <ArrowBack />
-          </IconButton>
-          <Box>
-            <Typography variant="h4" sx={{ fontWeight: 800, color: '#1e293b' }}>
-              Gestión de Usuarios
-            </Typography>
-            <Typography variant="body1" color="text.secondary">
-              Administra los accesos y roles de tu plataforma SaaS
-            </Typography>
-          </Box>
+        <Box>
+          <Typography variant="h4" sx={{ fontWeight: 800, color: '#1e293b' }}>
+            Gestión de Usuarios
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            Administra los accesos y roles de tu plataforma SaaS
+          </Typography>
         </Box>
         <Button
           variant="contained"
@@ -164,10 +162,10 @@ const Users = () => {
 
       {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
 
-      <Card elevation={3} sx={{ borderRadius: 3, overflow: 'hidden' }}>
+      <Card elevation={0} sx={{ borderRadius: 3, overflow: 'hidden', border: '1px solid #e2e8f0' }}>
         <Box sx={{ p: 2, bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
           <TextField
-            placeholder="Buscar por usuario o email..."
+            placeholder="Buscar por usuario o número..."
             size="small"
             fullWidth
             value={search}
@@ -187,7 +185,7 @@ const Users = () => {
             <TableHead sx={{ bgcolor: '#f1f5f9' }}>
               <TableRow>
                 <TableCell sx={{ fontWeight: 'bold' }}>Usuario</TableCell>
-                <TableCell sx={{ fontWeight: 'bold' }}>Email</TableCell>
+                <TableCell sx={{ fontWeight: 'bold' }}>WhatsApp</TableCell>
                 <TableCell sx={{ fontWeight: 'bold' }}>Rol</TableCell>
                 <TableCell sx={{ fontWeight: 'bold' }}>Plan</TableCell>
                 <TableCell sx={{ fontWeight: 'bold' }}>Vencimiento</TableCell>
@@ -205,7 +203,7 @@ const Users = () => {
                       <Typography variant="body2" sx={{ fontWeight: 600 }}>{user.username}</Typography>
                     </Box>
                   </TableCell>
-                  <TableCell>{user.email}</TableCell>
+                  <TableCell>{user.whatsappNumber}</TableCell>
                   <TableCell>
                     <Chip 
                       label={user.role || 'user'} 
@@ -251,7 +249,14 @@ const Users = () => {
                 <TextField fullWidth label="Usuario" name="username" value={formData.username} onChange={handleChange} />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField fullWidth label="Email" name="email" value={formData.email} onChange={handleChange} />
+                <TextField 
+                   fullWidth 
+                   label="WhatsApp (521...)" 
+                   name="whatsappNumber" 
+                   value={formData.whatsappNumber} 
+                   onChange={handleChange} 
+                   helperText="Incluir código de país, solo números."
+                />
               </Grid>
               <Grid item xs={12}>
                 <TextField 
@@ -295,7 +300,7 @@ const Users = () => {
           </Button>
         </DialogActions>
       </Dialog>
-    </Container>
+    </Box>
   );
 };
 

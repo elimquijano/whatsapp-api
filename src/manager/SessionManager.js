@@ -10,6 +10,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import pino from "pino";
 import QRCode from "qrcode";
+import User from "../models/User.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -96,6 +97,44 @@ class SessionManager {
           sessionData.status = "open";
           sessionData.qrDataUrl = null;
           this.logger.info(`✅ Conectado: Usuario ${userId}, Sesión ${sessionId}`);
+        }
+      });
+
+      // WEBHOOK HANDLING
+      sock.ev.on("messages.upsert", async ({ messages, type }) => {
+        try {
+          if (type !== 'notify') return;
+          
+          const user = await User.findByPk(userId);
+          if (!user || !user.webhookUrl) return;
+
+          for (const msg of messages) {
+            if (!msg.message) continue; // Skip updates without message content
+
+            // Prepare payload
+            const payload = {
+              event: 'message.received',
+              instanceId: sessionId,
+              data: {
+                id: msg.key.id,
+                from: msg.key.remoteJid,
+                to: msg.key.fromMe ? msg.key.remoteJid : sock.user.id,
+                pushName: msg.pushName,
+                message: msg.message,
+                timestamp: msg.messageTimestamp,
+                fromMe: msg.key.fromMe
+              }
+            };
+
+            // Send to webhook
+            fetch(user.webhookUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            }).catch(err => this.logger.error(`Webhook error for user ${userId}:`, err.message));
+          }
+        } catch (error) {
+          this.logger.error("Error processing webhook:", error);
         }
       });
 

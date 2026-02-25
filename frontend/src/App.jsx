@@ -7,17 +7,9 @@ import Users from './pages/Users';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 
-const theme = createTheme({
-  palette: {
-    primary: { main: '#0ea5e9' },
-    secondary: { main: '#6366f1' },
-    background: { default: '#f8fafc' },
-  },
-  shape: { borderRadius: 12 },
-  typography: {
-    fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
-  },
-});
+import PublicDocumentation from './pages/PublicDocumentation';
+import Landing from './pages/Landing';
+import theme from './theme';
 
 const ProtectedRoute = ({ children }) => {
   const { user } = useAuth();
@@ -27,7 +19,7 @@ const ProtectedRoute = ({ children }) => {
 
 const PublicRoute = ({ children }) => {
   const { user } = useAuth();
-  if (user) return <Navigate to="/" />;
+  if (user) return <Navigate to="/dashboard" />; 
   return children;
 };
 
@@ -38,6 +30,8 @@ function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="/" element={<Landing />} />
+            <Route path="/docs" element={<PublicDocumentation />} />
             <Route
               path="/login"
               element={
@@ -47,18 +41,10 @@ function App() {
               }
             />
             <Route
-              path="/"
+              path="/dashboard/*"
               element={
                 <ProtectedRoute>
                   <Dashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/users"
-              element={
-                <ProtectedRoute>
-                  <Users />
                 </ProtectedRoute>
               }
             />

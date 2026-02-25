@@ -49,12 +49,12 @@ const MessageSender = () => {
     setError('');
 
     try {
-      const response = await axios.post('/api/whatsapp/send-text', {
-        number,
-        message,
-        sessionId: selectedSession
+      const response = await axios.post('/api/v1/messages/text', {
+        recipient: number,
+        body: message,
+        account_id: selectedSession
       });
-      setSuccess(`Mensaje enviado con ID: ${response.data.messageId}`);
+      setSuccess(`Mensaje enviado con ID: ${response.data.message_id}`);
       setMessage('');
     } catch (err) {
       setError(err.response?.data?.error || 'Error al enviar el mensaje');

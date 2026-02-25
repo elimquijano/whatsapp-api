@@ -29,6 +29,26 @@ export const getProfile = async (req, res) => {
   }
 };
 
+export const updateWebhook = async (req, res) => {
+  try {
+    const { webhookUrl } = req.body;
+    // Basic validation
+    if (webhookUrl && !webhookUrl.startsWith('http')) {
+      return res.status(400).json({ success: false, error: "URL inválida. Debe comenzar con http:// o https://" });
+    }
+
+    const user = await User.findByPk(req.user.id);
+    if (!user) return res.status(404).json({ success: false, error: "Usuario no encontrado" });
+
+    user.webhookUrl = webhookUrl;
+    await user.save();
+
+    res.json({ success: true, message: "Webhook actualizado correctamente", webhookUrl });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 export const getAllUsers = async (req, res) => {
   try {
     const users = await User.findAll({
@@ -55,12 +75,12 @@ export const getAllUsers = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { username, email, password, roleId, planId, expirationDate } = req.body;
+    const { username, whatsappNumber, password, roleId, planId, expirationDate } = req.body;
     
     const user = await User.findByPk(id);
     if (!user) return res.status(404).json({ success: false, error: "Usuario no encontrado" });
 
-    const updateData = { username, email, roleId, planId, expirationDate };
+    const updateData = { username, whatsappNumber, roleId, planId, expirationDate };
     if (password && password.trim() !== "") {
       updateData.password = password;
     }
@@ -74,16 +94,18 @@ export const updateUser = async (req, res) => {
 
 export const createUser = async (req, res) => {
   try {
-    const { username, email, password, roleId, planId, expirationDate } = req.body;
-    if (!username || !email || !password || !roleId) {
-      return res.status(400).json({ success: false, error: "Todos los campos son obligatorios" });
+    const { username, whatsappNumber, password, roleId, planId, expirationDate } = req.body;
+    
+    // Validar campos requeridos
+    if (!username || !whatsappNumber || !password || !roleId) {
+      return res.status(400).json({ success: false, error: "Username, WhatsApp Number, Password y Role son obligatorios" });
     }
 
     const whatsappSessionId = crypto.randomBytes(8).toString("hex");
 
     const user = await User.create({
       username,
-      email,
+      whatsappNumber,
       password,
       roleId,
       planId,
