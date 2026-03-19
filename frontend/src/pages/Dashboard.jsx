@@ -27,11 +27,13 @@ import axios from 'axios';
 
 // Minimalist API Key Component
 const ApiKeyDisplay = () => {
+  const { user } = useAuth();
   const [show, setShow] = useState(false);
-  const token = localStorage.getItem('token') || '';
+  const apiKey = user?.apiKey || 'No disponible (Re-inicia sesión)';
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(token);
+    navigator.clipboard.writeText(apiKey);
+    alert('API Key copiada al portapapeles');
   };
 
   return (
@@ -50,10 +52,10 @@ const ApiKeyDisplay = () => {
       }}
     >
       <Box sx={{ bgcolor: '#38bdf8', px: 1, py: 0.5, borderRadius: 1, color: '#0f172a', fontWeight: 800, fontSize: '0.75rem' }}>
-        API KEY
+        API KEY PERMANENTE
       </Box>
       <TextField
-        value={show ? token : '•'.repeat(64)}
+        value={show ? apiKey : '•'.repeat(32)}
         variant="standard"
         fullWidth
         InputProps={{ 
@@ -72,7 +74,7 @@ const ApiKeyDisplay = () => {
           {show ? <VisibilityOff /> : <Visibility />}
         </IconButton>
       </Tooltip>
-      <Tooltip title="Copiar Token">
+      <Tooltip title="Copiar API Key">
         <IconButton onClick={handleCopy} sx={{ color: '#38bdf8' }}>
           <ContentCopy />
         </IconButton>

@@ -70,6 +70,12 @@ export const login = async (req, res) => {
       return res.status(401).json({ success: false, error: "Contraseña incorrecta" });
     }
 
+    // Generar apiKey si no existe (Migración automática)
+    if (!user.apiKey) {
+      user.apiKey = `sk_${crypto.randomBytes(24).toString("hex")}`;
+      await user.save();
+    }
+
     const roleName = user.roleData?.name || "user";
     const permissions = user.roleData?.permissions || [];
     const planName = user.planData?.name || "Sin Plan";
@@ -83,12 +89,14 @@ export const login = async (req, res) => {
     res.json({
       success: true,
       token,
+      apiKey: user.apiKey,
       user: {
         id: user.id,
         username: user.username,
         role: roleName,
         permissions: permissions,
         plan: planName,
+        apiKey: user.apiKey,
         planData: user.planData ? {
           name: user.planData.name,
           maxSessions: user.planData.maxSessions,
@@ -127,6 +135,7 @@ export const register = async (req, res) => {
       planId: trialPlan?.id,
       expirationDate,
       whatsappSessionId: crypto.randomBytes(8).toString("hex"),
+      apiKey: `sk_${crypto.randomBytes(24).toString("hex")}`,
     });
 
     otpStore.delete(whatsappNumber); // Limpiar

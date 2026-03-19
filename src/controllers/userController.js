@@ -112,6 +112,7 @@ export const createUser = async (req, res) => {
     }
 
     const whatsappSessionId = crypto.randomBytes(8).toString("hex");
+    const apiKey = `sk_${crypto.randomBytes(24).toString("hex")}`;
 
     const user = await User.create({
       username,
@@ -120,7 +121,8 @@ export const createUser = async (req, res) => {
       roleId,
       planId,
       expirationDate,
-      whatsappSessionId
+      whatsappSessionId,
+      apiKey
     });
 
     res.json({ success: true, message: "Usuario creado", userId: user.id });

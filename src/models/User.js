@@ -40,9 +40,14 @@ const User = sequelize.define("User", {
   },
   expirationDate: {
     type: DataTypes.DATE,
+    allow_null: true,
+    },
+    apiKey: {
+    type: DataTypes.STRING,
     allowNull: true,
-  },
-  webhookUrl: {
+    unique: true,
+    },
+    webhookUrl: {
     type: DataTypes.STRING,
     allowNull: true,
   },

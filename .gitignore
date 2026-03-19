@@ -15,6 +15,7 @@ logs/
 .wwebjs_auth/
 .wwebjs_cache/
 sessions/
+dist/
 
 # Uploads y archivos recibidos (archivos temporales)
 uploads/

@@ -16,16 +16,39 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const authenticateToken = (req, res, next) => {
+const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(" ")[1];
 
   if (!token) return res.status(401).json({ success: false, error: "Token no proporcionado" });
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, decodedUser) => {
-    if (err) return res.status(403).json({ success: false, error: "Token inválido o expirado" });
-    req.user = decodedUser;
-    next();
+  // 1. Intentar validar como JWT (Token de sesión temporal)
+  jwt.verify(token, process.env.JWT_SECRET, async (err, decodedUser) => {
+    if (!err) {
+      req.user = decodedUser;
+      return next();
+    }
+
+    // 2. Si el JWT falla (expirado o inválido), intentar validar como API Key permanente
+    try {
+      const user = await User.findOne({ 
+        where: { apiKey: token },
+        include: [{ model: Role, as: "roleData" }]
+      });
+      
+      if (user) {
+        req.user = { 
+          id: user.id, 
+          username: user.username, 
+          role: user.roleData?.name || "user" 
+        };
+        return next();
+      }
+      
+      return res.status(403).json({ success: false, error: "Token inválido o expirado" });
+    } catch (dbError) {
+      return res.status(500).json({ success: false, error: "Error de servidor al validar token" });
+    }
   });
 };
 
