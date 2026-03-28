@@ -117,7 +117,39 @@ class SessionManager {
           }
 
           for (const msg of messages) {
-            if (!msg.message) continue; // Skip updates without message content
+            if (!msg.message) continue;
+
+            const remoteJid = msg.key.remoteJid;
+            const participant = msg.key.participant;
+            let senderJid = participant || remoteJid;
+
+            // LOG SEGURO
+            this.logger.info(`📩 Mensaje de ${msg.pushName || 'Desconocido'} (${remoteJid})`);
+
+            // RESOLUCIÓN DE LID A NÚMERO REAL
+            if (senderJid.endsWith('@lid')) {
+              // TRUCO: Buscar cualquier JID real escondido en el objeto del mensaje
+              const msgString = JSON.stringify(msg);
+              const realJidMatch = msgString.match(/(\d+)@s\.whatsapp\.net/);
+              
+              if (realJidMatch) {
+                senderJid = realJidMatch[0];
+                this.logger.info(`🎯 ¡Número real encontrado en metadatos!: ${senderJid}`);
+              } else {
+                // Si no hay match, intentar buscar en la caché (lo que ya teníamos)
+                const contact = sock.contacts ? sock.contacts[senderJid] : null;
+                if (contact && contact.id && contact.id.endsWith('@s.whatsapp.net')) {
+                  senderJid = contact.id;
+                }
+              }
+            } else if (msg.key.fromMe) {
+              senderJid = sock.user.id;
+            }
+
+            // Limpiar el ID para obtener solo el número
+            const senderNumber = senderJid.split('@')[0].split(':')[0];
+
+            this.logger.info(`✅ Remitente final: ${senderNumber} (Nombre: ${msg.pushName || '?'})`);
 
             // Prepare payload
             const payload = {
@@ -125,8 +157,9 @@ class SessionManager {
               instanceId: sessionId,
               data: {
                 id: msg.key.id,
-                from: msg.key.remoteJid,
-                to: msg.key.fromMe ? msg.key.remoteJid : sock.user.id,
+                from: remoteJid,
+                senderJid: senderJid,
+                senderNumber: senderNumber,
                 pushName: msg.pushName,
                 message: msg.message,
                 timestamp: msg.messageTimestamp,
