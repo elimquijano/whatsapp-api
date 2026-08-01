@@ -15,7 +15,7 @@ const Documentation = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [selectedMethod, setSelectedMethod] = useState('POST');
-  const [url, setUrl] = useState(apiUrl('/api/v1/messages/text'));
+  const [url, setUrl] = useState(apiUrl('/api/v1/sessions/SESSION_ID/messages/text'));
   const [activeTab, setActiveTab] = useState(0);
   const [response, setResponse] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -25,7 +25,7 @@ const Documentation = () => {
   const allEndpoints = [
     { 
       method: 'POST', 
-      path: '/api/v1/messages/text', 
+      path: '/api/v1/sessions/SESSION_ID/messages/text',
       name: 'Text Messaging', 
       feature: 'text', 
       body: { 
@@ -35,7 +35,7 @@ const Documentation = () => {
     },
     { 
       method: 'POST', 
-      path: '/api/v1/messages/media', 
+      path: '/api/v1/sessions/SESSION_ID/messages/media',
       name: 'Send Image (URL)', 
       feature: 'media', 
       body: { 
@@ -47,19 +47,20 @@ const Documentation = () => {
     },
     { 
       method: 'POST', 
-      path: '/api/v1/messages/media', 
+      path: '/api/v1/sessions/SESSION_ID/messages/media',
       name: 'Send Image (Base64)', 
       feature: 'media', 
       body: { 
         recipient: "5493511234567", 
         type: "image",
-        payload: "data:image/jpeg;base64,/9j/4AAQSkZJRg...", 
+        base64: "/9j/4AAQSkZJRg...",
+        mimetype: "image/jpeg",
         caption: "High quality encoded image" 
       } 
     },
         { 
           method: 'POST', 
-          path: '/api/v1/messages/media', 
+          path: '/api/v1/sessions/SESSION_ID/messages/media',
           name: 'Send Document (URL)', 
           feature: 'files', 
           body: { 
@@ -71,19 +72,20 @@ const Documentation = () => {
         },
         { 
           method: 'POST', 
-          path: '/api/v1/messages/media', 
+          path: '/api/v1/sessions/SESSION_ID/messages/media',
           name: 'Send Document (Base64)', 
           feature: 'files', 
           body: { 
             recipient: "5493511234567", 
             type: "document",
-            payload: "data:application/pdf;base64,JVBERi0xLjQK...", 
+            base64: "JVBERi0xLjQK...",
+            mimetype: "application/pdf",
             filename: "invoice_2024.pdf" 
           } 
         },
         { 
           method: 'POST', 
-          path: '/api/v1/messages/media', 
+          path: '/api/v1/sessions/SESSION_ID/messages/media',
           name: 'Send Audio (URL)', 
           feature: 'media', 
           body: { 
@@ -94,13 +96,14 @@ const Documentation = () => {
         },
         { 
           method: 'POST', 
-          path: '/api/v1/messages/media', 
+          path: '/api/v1/sessions/SESSION_ID/messages/media',
           name: 'Send Audio (Base64)', 
           feature: 'media', 
           body: { 
             recipient: "5493511234567", 
             type: "audio",
-            payload: "data:audio/mp3;base64,SUQzBAAAAAAA..."
+            base64: "SUQzBAAAAAAA...",
+            mimetype: "audio/mpeg"
           } 
         },
       ];

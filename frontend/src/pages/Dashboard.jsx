@@ -19,7 +19,6 @@ import {
   MenuItem,
   Paper,
   Stack,
-  TextField,
   Toolbar,
   Tooltip,
   Typography,
@@ -29,33 +28,34 @@ import {
 } from '@mui/material';
 import {
   AutoAwesome,
-  Campaign as CampaignIcon,
-  Chat,
-  ChevronRight,
   Code as CodeIcon,
-  ContentCopy,
   Dashboard as DashboardIcon,
   DarkMode,
   LightMode,
   Logout,
   Menu as MenuIcon,
   People,
-  Visibility,
-  VisibilityOff,
   WhatsApp,
 } from '@mui/icons-material';
-import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useColorMode } from '../context/ColorModeContext';
 import WhatsAppConnector from '../components/WhatsAppConnector';
 import MessageSender from '../components/MessageSender';
-import ApiConsole from '../components/ApiConsole';
+import SessionWorkspace from '../components/SessionWorkspace';
+import ApiKeyDisplay from '../components/ApiKeyDisplay';
 import Users from './Users';
 import CrmInbox from './CrmInbox';
 import Campaigns from './Campaigns';
 import AiCrmConfigPage from './AiCrmConfigPage';
+import SessionApiPage from './SessionApiPage';
 
 const SIDEBAR_WIDTH = 276;
+
+const LegacyAiRedirect = () => {
+  const { sessionId = '' } = useParams();
+  return <Navigate to={`/dashboard/sessions/${encodeURIComponent(sessionId)}/ai`} replace />;
+};
 
 const PageIntro = ({ eyebrow, title, description, action }) => (
   <Stack
@@ -78,52 +78,7 @@ const PageIntro = ({ eyebrow, title, description, action }) => (
   </Stack>
 );
 
-const ApiKeyDisplay = () => {
-  const { user } = useAuth();
-  const [show, setShow] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const apiKey = user?.apiKey || 'No disponible. Vuelve a iniciar sesión.';
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(apiKey);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
-  };
-
-  return (
-    <Paper variant="outlined" sx={{ p: { xs: 2, md: 2.5 }, mb: 3, overflow: 'hidden' }}>
-      <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ xs: 'stretch', sm: 'center' }} spacing={1.5}>
-        <Chip label="API KEY" color="primary" size="small" sx={{ alignSelf: { xs: 'flex-start', sm: 'center' } }} />
-        <TextField
-          value={show ? apiKey : '•'.repeat(32)}
-          size="small"
-          fullWidth
-          aria-label="API Key"
-          InputProps={{
-            readOnly: true,
-            sx: { fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', letterSpacing: show ? 0 : 2 },
-            endAdornment: (
-              <Stack direction="row" spacing={0.5}>
-                <Tooltip title={show ? 'Ocultar' : 'Mostrar'}>
-                  <IconButton size="small" onClick={() => setShow((current) => !current)}>
-                    {show ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title={copied ? 'Copiada' : 'Copiar'}>
-                  <IconButton size="small" color={copied ? 'success' : 'primary'} onClick={handleCopy}>
-                    <ContentCopy fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Stack>
-            ),
-          }}
-        />
-      </Stack>
-    </Paper>
-  );
-};
-
-const SubscriptionCard = ({ user, onNavigate }) => {
+const SubscriptionCard = ({ user }) => {
   const planName = user?.planData?.name || user?.plan || 'Sin plan';
   const expiration = user?.expirationDate ? new Date(user.expirationDate).toLocaleDateString() : 'Sin vencimiento';
   const professional = user?.planData?.features?.includes('ai_crm');
@@ -148,21 +103,12 @@ const SubscriptionCard = ({ user, onNavigate }) => {
         </Box>
         <AutoAwesome sx={{ color: '#7dd3fc' }} />
       </Stack>
-      {professional && (
-        <Stack spacing={1} sx={{ mt: 3, position: 'relative' }}>
-          <Button fullWidth variant="contained" color="primary" endIcon={<ChevronRight />} onClick={() => onNavigate('/dashboard/crm')}>
-            Abrir CRM
-          </Button>
-          <Button fullWidth variant="text" sx={{ color: '#bae6fd' }} endIcon={<ChevronRight />} onClick={() => onNavigate('/dashboard/campaigns')}>
-            Crear campaña
-          </Button>
-        </Stack>
-      )}
+      {professional && <Typography variant="body2" sx={{ mt: 3, color: '#bae6fd', position: 'relative' }}>CRM, campañas y agentes se administran desde cada sesión.</Typography>}
     </Paper>
   );
 };
 
-const DashboardHome = ({ user, onNavigate }) => (
+const DashboardHome = ({ user }) => (
   <Box>
     <PageIntro
       eyebrow="Centro de operaciones"
@@ -171,13 +117,12 @@ const DashboardHome = ({ user, onNavigate }) => (
       action={<Chip icon={<WhatsApp />} color="success" variant="outlined" label="Canal WhatsApp" />}
     />
     <Grid container spacing={{ xs: 2, md: 3 }} alignItems="flex-start">
-      <Grid item xs={12} xl={8} sx={{ minWidth: 0 }}>
+      <Grid item xs={12} xl={9} sx={{ minWidth: 0 }}>
         <WhatsAppConnector />
       </Grid>
-      <Grid item xs={12} xl={4} sx={{ minWidth: 0 }}>
+      <Grid item xs={12} xl={3} sx={{ minWidth: 0 }}>
         <Stack spacing={{ xs: 2, md: 3 }}>
-          <SubscriptionCard user={user} onNavigate={onNavigate} />
-          <MessageSender />
+          <SubscriptionCard user={user} />
         </Stack>
       </Grid>
     </Grid>
@@ -199,20 +144,16 @@ const Dashboard = () => {
   const menuItems = [
     { text: 'Panel de control', icon: <DashboardIcon />, path: '/dashboard' },
     { text: 'Documentación API', icon: <CodeIcon />, path: '/dashboard/docs' },
-    ...(hasCrm ? [
-      { text: 'CRM y conversaciones', icon: <Chat />, path: '/dashboard/crm' },
-      { text: 'Campañas', icon: <CampaignIcon />, path: '/dashboard/campaigns' },
-    ] : []),
     ...(user?.role === 'admin' ? [{ text: 'Usuarios', icon: <People />, path: '/dashboard/users' }] : []),
   ];
 
   const selected = (path) => path === '/dashboard'
     ? location.pathname === path || location.pathname === `${path}/`
     : location.pathname.startsWith(path);
-  const activeItem = location.pathname.startsWith('/dashboard/ai/')
-    ? { text: 'Configuración IA' }
+  const activeItem = location.pathname.startsWith('/dashboard/sessions/')
+    ? { text: 'Espacio de sesión' }
     : [...menuItems].reverse().find((item) => selected(item.path));
-  const workspace = location.pathname.startsWith('/dashboard/crm') || location.pathname.startsWith('/dashboard/ai/');
+  const workspace = location.pathname.startsWith('/dashboard/sessions/');
 
   const goTo = (path) => {
     navigate(path);
@@ -278,9 +219,9 @@ const Dashboard = () => {
   );
 
   return (
-    <Box sx={{ height: '100dvh', maxHeight: '100dvh', display: 'flex', overflow: 'hidden', bgcolor: 'background.default' }}>
+    <Box sx={{ height: '100dvh', display: 'flex', overflow: 'hidden', bgcolor: 'background.default' }}>
       {desktop ? (
-        <Box component="aside" sx={{ width: SIDEBAR_WIDTH, height: '100dvh', flexShrink: 0, overflow: 'hidden' }}>{drawerContent}</Box>
+        <Box component="aside" sx={{ width: SIDEBAR_WIDTH, height: '100%', flexShrink: 0, overflow: 'hidden' }}>{drawerContent}</Box>
       ) : (
         <Drawer
           open={mobileOpen}
@@ -292,7 +233,7 @@ const Dashboard = () => {
         </Drawer>
       )}
 
-      <Box sx={{ flex: 1, minWidth: 0, height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <AppBar
           position="static"
           color="transparent"
@@ -334,40 +275,60 @@ const Dashboard = () => {
           </Toolbar>
         </AppBar>
 
-        <Box component="main" sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain' }}>
+        <Box
+          component="main"
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: workspace ? 'hidden' : 'auto',
+            overflowX: 'hidden',
+            overscrollBehavior: 'contain',
+          }}
+        >
           <Container
             maxWidth={workspace ? false : 'xl'}
             disableGutters={workspace}
             sx={{
-              minHeight: '100%',
+              height: workspace ? '100%' : 'auto',
+              minHeight: workspace ? 0 : '100%',
+              display: workspace ? 'flex' : 'block',
+              flexDirection: workspace ? 'column' : undefined,
+              overflow: workspace ? 'hidden' : 'visible',
               px: workspace ? 0 : { xs: 2, sm: 2.5, lg: 3.5 },
               py: workspace ? 0 : { xs: 2.5, md: 3.5 },
             }}
           >
             {isPlanExpired && (
-              <Alert severity="error" sx={{ mb: workspace ? 0 : 3, borderRadius: workspace ? 0 : 2 }}>
+              <Alert severity="error" sx={{ mb: workspace ? 0 : 3, borderRadius: workspace ? 0 : 2, flexShrink: 0 }}>
                 Tu suscripción venció. Contacta a soporte para renovarla y reactivar la automatización.
               </Alert>
             )}
             <Routes>
-              <Route path="/" element={<DashboardHome user={user} onNavigate={goTo} />} />
+              <Route path="/" element={<DashboardHome user={user} />} />
               <Route path="/docs" element={(
                 <Box>
-                  <PageIntro eyebrow="Desarrolladores" title="Documentación y consola" description="Prueba los endpoints con tu sesión y copia las credenciales que necesita tu integración." />
+                  <PageIntro eyebrow="Desarrolladores" title="Credenciales y documentación API" description="Copia la credencial de tu cuenta. Las pruebas interactivas se abren desde una sesión concreta." />
                   <ApiKeyDisplay />
                   <Paper variant="outlined" sx={{ p: { xs: 2, md: 2.5 }, mb: 2 }}>
-                    <Typography variant="h6">Consola interactiva</Typography>
+                    <Typography variant="h6">La sesión siempre es explícita</Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                      Elige una petición, adapta el cuerpo JSON y ejecuta una prueba controlada.
+                      Entra a una sesión desde el panel y abre su sección API para probar endpoints sin riesgo de enviar desde otro número.
                     </Typography>
                   </Paper>
-                  <ApiConsole mode="private" userToken={localStorage.getItem('token')} />
                 </Box>
               )} />
               <Route path="/users" element={user?.role === 'admin' ? <Users /> : <Navigate to="/dashboard" />} />
-              <Route path="/crm" element={hasCrm ? <CrmInbox /> : <Navigate to="/dashboard" />} />
-              <Route path="/campaigns" element={hasCrm ? <Campaigns /> : <Navigate to="/dashboard" />} />
-              <Route path="/ai/:sessionId" element={hasCrm ? <AiCrmConfigPage /> : <Navigate to="/dashboard" />} />
+              <Route path="/sessions/:sessionId" element={<SessionWorkspace />}>
+                <Route index element={<Navigate to="send" replace />} />
+                <Route path="send" element={<Box sx={{ p: { xs: 1.5, sm: 2, lg: 2.5 } }}><MessageSender /></Box>} />
+                <Route path="api" element={<SessionApiPage />} />
+                <Route path="crm" element={hasCrm ? <CrmInbox /> : <Navigate to="/dashboard" />} />
+                <Route path="campaigns" element={hasCrm ? <Campaigns /> : <Navigate to="/dashboard" />} />
+                <Route path="ai" element={hasCrm ? <AiCrmConfigPage /> : <Navigate to="/dashboard" />} />
+              </Route>
+              <Route path="/crm" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/campaigns" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/ai/:sessionId" element={<LegacyAiRedirect />} />
             </Routes>
           </Container>
         </Box>

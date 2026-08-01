@@ -4,8 +4,8 @@ import {
   Alert, Chip, Grid, Card, CardContent, CardActions, TextField, Switch, FormControlLabel
 } from '@mui/material';
 import {
-  WhatsApp, Refresh, Logout, CloudDone,
-  CloudOff, QrCodeScanner, Add, Settings
+  WhatsApp, Logout, CloudDone,
+  CloudOff, QrCodeScanner, Add, Settings, Chat, Campaign, Send, Code
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
@@ -23,7 +23,7 @@ const WhatsAppConnector = () => {
 
   const fetchSessions = useCallback(async () => {
     try {
-      const response = await axios.get('/api/whatsapp/sessions');
+      const response = await axios.get('/api/v1/sessions');
       const receivedSessions = response.data.sessions || [];
       setSessions(receivedSessions);
       setWebhookUrls((current) => {
@@ -63,7 +63,7 @@ const WhatsAppConnector = () => {
     setActionLoading(true);
     setError('');
     try {
-      await axios.post('/api/whatsapp/connect', { sessionId, resetAuth: true });
+      await axios.post(`/api/v1/sessions/${sessionId}/connect`, { resetAuth: true });
       await fetchSessions();
     } catch (err) {
       setError(err.response?.data?.error || 'No se pudo volver a vincular la sesión');
@@ -76,7 +76,7 @@ const WhatsAppConnector = () => {
     if (!window.confirm('¿Desvincular este WhatsApp? La configuración CRM, chats y workflows permanecerán guardados.')) return;
     setActionLoading(true);
     try {
-      await axios.post('/api/whatsapp/logout', { sessionId });
+      await axios.post(`/api/v1/sessions/${sessionId}/logout`);
       await fetchSessions();
     } catch (err) {
       setError('Error al cerrar la sesión');
@@ -89,7 +89,7 @@ const WhatsAppConnector = () => {
     setSavingWebhook(sessionId);
     setError('');
     try {
-      await axios.put('/api/users/webhook', { sessionId, webhookUrl: webhookUrls[sessionId] || '' });
+      await axios.put(`/api/v1/sessions/${sessionId}/webhook`, { webhookUrl: webhookUrls[sessionId] || '' });
     } catch (err) {
       setError(err.response?.data?.error || 'Error al guardar el webhook');
     } finally {
@@ -100,7 +100,7 @@ const WhatsAppConnector = () => {
   const toggleAi = async (sessionId, enabled) => {
     setError('');
     try {
-      const response = await axios.put(`/api/ai/sessions/${sessionId}/toggle`, { enabled });
+      const response = await axios.put(`/api/v1/sessions/${sessionId}/ai/toggle`, { enabled });
       setSessions((current) => current.map((session) => session.sessionId === sessionId ? { ...session, aiAutoReplyEnabled: response.data.autoReplyEnabled } : session));
     } catch (err) {
       setError(err.response?.data?.error || 'No se pudo cambiar el modo de respuesta');
@@ -183,6 +183,11 @@ const WhatsAppConnector = () => {
                       color={getStatusColor(session.status)}
                     />
                   </Box>
+                  {(session.displayName || session.phoneNumber) && (
+                    <Typography variant="h6" sx={{ mb: 1 }}>
+                      {session.displayName || `+${session.phoneNumber}`}
+                    </Typography>
+                  )}
 
                   {session.status === 'waiting_qr' && session.qr ? (
                     <Box sx={{ textAlign: 'center', mt: 2 }}>
@@ -236,6 +241,17 @@ const WhatsAppConnector = () => {
                       </Button>
                     </Box>
                   )}
+                  <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                    <Typography variant="subtitle2" sx={{ mb: 1 }}>Trabajar en esta sesión</Typography>
+                    <Grid container spacing={1}>
+                      {user?.planData?.features?.includes('ai_crm') && <>
+                        <Grid item xs={6}><Button fullWidth size="small" variant="outlined" startIcon={<Chat />} onClick={() => navigate(`/dashboard/sessions/${encodeURIComponent(session.sessionId)}/crm`)}>CRM / Contactos</Button></Grid>
+                        <Grid item xs={6}><Button fullWidth size="small" variant="outlined" startIcon={<Campaign />} onClick={() => navigate(`/dashboard/sessions/${encodeURIComponent(session.sessionId)}/campaigns`)}>Campañas</Button></Grid>
+                      </>}
+                      <Grid item xs={6}><Button fullWidth size="small" variant="outlined" startIcon={<Send />} onClick={() => navigate(`/dashboard/sessions/${encodeURIComponent(session.sessionId)}/send`)}>Enviar</Button></Grid>
+                      <Grid item xs={6}><Button fullWidth size="small" variant="outlined" startIcon={<Code />} onClick={() => navigate(`/dashboard/sessions/${encodeURIComponent(session.sessionId)}/api`)}>API</Button></Grid>
+                    </Grid>
+                  </Box>
                 </CardContent>
                 <CardActions sx={{ justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap', gap: 0.5, p: 1.5, bgcolor: 'surface.soft', borderTop: '1px solid', borderColor: 'divider' }}>
                   {user?.planData?.features?.includes('ai_crm') && <>
@@ -244,7 +260,7 @@ const WhatsAppConnector = () => {
                       control={<Switch checked={Boolean(session.aiAutoReplyEnabled)} onChange={(event) => toggleAi(session.sessionId, event.target.checked)} />}
                       label={session.aiAutoReplyEnabled ? 'IA general activa' : 'IA general pausada'}
                     />
-                    <Button size="small" startIcon={<Settings />} onClick={() => navigate(`/dashboard/ai/${encodeURIComponent(session.sessionId)}`)}>Configurar IA</Button>
+                    <Button size="small" startIcon={<Settings />} onClick={() => navigate(`/dashboard/sessions/${encodeURIComponent(session.sessionId)}/ai`)}>Configurar IA</Button>
                   </>}
                   {!['disconnected', 'logged_out', 'error'].includes(session.status) && <Button 
                     size="small" 

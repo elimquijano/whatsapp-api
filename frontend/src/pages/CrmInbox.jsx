@@ -10,6 +10,7 @@ import {
   Send, SmartToy, WhatsApp
 } from '@mui/icons-material';
 import axios from 'axios';
+import { useOutletContext, useParams } from 'react-router-dom';
 
 const statusInfo = {
   new: { label: 'Nuevo', tone: 'default' },
@@ -48,11 +49,19 @@ const newImportForm = () => ({
   fieldMapping: '{\n  "phone": "phone",\n  "name": "name",\n  "externalId": "id"\n}',
 });
 
+const importSourceForm = (source) => ({
+  ...source,
+  authValue: '',
+  headers: JSON.stringify(source.headers || {}, null, 2),
+  requestBody: JSON.stringify(source.requestBody || {}, null, 2),
+  fieldMapping: JSON.stringify(source.fieldMapping || {}, null, 2),
+});
+
 const CrmInbox = () => {
   const theme = useTheme();
   const isCompactLayout = useMediaQuery(theme.breakpoints.down('lg'));
-  const [sessions, setSessions] = useState([]);
-  const [sessionId, setSessionId] = useState('');
+  const { sessionId = '' } = useParams();
+  const { session: selectedSession, reloadSessions } = useOutletContext();
   const [contacts, setContacts] = useState([]);
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -78,19 +87,17 @@ const CrmInbox = () => {
 
   useEffect(() => { selectedRef.current = selected; }, [selected]);
 
-  const loadSessions = useCallback(async () => {
-    try {
-      const { data } = await axios.get('/api/whatsapp/sessions');
-      setSessions(data.sessions || []);
-      if (data.sessions?.length) setSessionId((current) => current || data.sessions[0].sessionId);
-    } catch (err) { setError(err.response?.data?.error || 'No se pudieron cargar las sesiones'); }
-  }, []);
-
   useEffect(() => {
-    loadSessions();
-    const timer = setInterval(loadSessions, 5000);
-    return () => clearInterval(timer);
-  }, [loadSessions]);
+    contactsRequestRef.current.controller?.abort();
+    messagesRequestRef.current.controller?.abort();
+    setContacts([]);
+    setSelected(null);
+    selectedRef.current = null;
+    setMessages([]);
+    setDraft('');
+    setImportOpen(false);
+    setMobilePanel('contacts');
+  }, [sessionId]);
 
   const loadContacts = useCallback(async () => {
     if (!sessionId) return;
@@ -99,7 +106,7 @@ const CrmInbox = () => {
     const requestId = contactsRequestRef.current.id + 1;
     contactsRequestRef.current = { id: requestId, controller };
     try {
-      const { data } = await axios.get(`/api/crm/sessions/${sessionId}/contacts`, {
+      const { data } = await axios.get(`/api/v1/sessions/${sessionId}/crm/contacts`, {
         params: { ...(search ? { search } : {}), ...(status ? { status } : {}) },
         signal: controller.signal,
       });
@@ -141,7 +148,7 @@ const CrmInbox = () => {
     const contactId = selected.id;
     messagesRequestRef.current = { id: requestId, controller };
     try {
-      const { data } = await axios.get(`/api/crm/contacts/${contactId}/messages`, { signal: controller.signal });
+      const { data } = await axios.get(`/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/messages`, { signal: controller.signal });
       if (messagesRequestRef.current.id !== requestId) return;
       const nextMessages = data.messages || [];
       setMessages((current) => {
@@ -155,11 +162,11 @@ const CrmInbox = () => {
           });
         return isUnchanged ? current : nextMessages;
       });
-      await axios.put(`/api/crm/contacts/${contactId}/read`, undefined, { signal: controller.signal });
+      await axios.put(`/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/read`, undefined, { signal: controller.signal });
     } catch (err) {
       if (err.code !== 'ERR_CANCELED') setError(err.response?.data?.error || 'No se pudo cargar la conversación');
     }
-  }, [selected?.id]);
+  }, [selected?.id, sessionId]);
 
   useEffect(() => {
     loadMessages();
@@ -259,7 +266,7 @@ const CrmInbox = () => {
     const previousQueue = mutationState.queues.get(contactId) || Promise.resolve();
     const task = previousQueue.catch(() => {}).then(async () => {
       try {
-        const { data } = await axios.put(`/api/crm/contacts/${contactId}`, patch);
+        const { data } = await axios.put(`/api/v1/sessions/${sessionId}/crm/contacts/${contactId}`, patch);
         const confirmed = {};
         fields.forEach((field) => {
           if (mutationState.latestFields.get(`${contactId}:${field}`) === mutationId) {
@@ -296,7 +303,7 @@ const CrmInbox = () => {
     const contactId = String(target.id);
     setSending(true);
     try {
-      await axios.post(`/api/crm/contacts/${contactId}/messages`, { message: content });
+      await axios.post(`/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/messages`, { message: content });
       setDraft((current) => (
         String(selectedRef.current?.id) === contactId && current === content ? '' : current
       ));
@@ -320,40 +327,21 @@ const CrmInbox = () => {
   const toggleSessionAutomation = async (enabled) => {
     if (!sessionId || sessionAutomationSaving) return;
 
-    const previousValue = Boolean(sessions.find((item) => item.sessionId === sessionId)?.aiAutoReplyEnabled);
-    const updateSessionState = (value) => setSessions((current) => current.map((session) => (
-      session.sessionId === sessionId ? { ...session, aiAutoReplyEnabled: value } : session
-    )));
-
     setError('');
     setSessionAutomationSaving(true);
-    updateSessionState(enabled);
     try {
-      const { data } = await axios.put(`/api/ai/sessions/${sessionId}/toggle`, { enabled });
-      updateSessionState(Boolean(data.autoReplyEnabled));
+      await axios.put(`/api/v1/sessions/${sessionId}/ai/toggle`, { enabled });
+      await reloadSessions();
     } catch (err) {
-      updateSessionState(previousValue);
       setError(err.response?.data?.error || 'No se pudo cambiar el modo general de IA');
     } finally {
       setSessionAutomationSaving(false);
     }
   };
 
-  const selectedSession = sessions.find((item) => item.sessionId === sessionId);
   const selectedChatAutoEnabled = selected?.automationMode === 'automatic'
     || (selected?.automationMode === 'inherit' && Boolean(selectedSession?.aiAutoReplyEnabled));
   const selectedAutomation = automationInfo(selected, selectedSession?.aiAutoReplyEnabled);
-
-  const handleSessionChange = (event) => {
-    contactsRequestRef.current.controller?.abort();
-    messagesRequestRef.current.controller?.abort();
-    setSessionId(event.target.value);
-    setSelected(null);
-    selectedRef.current = null;
-    setMessages([]);
-    setDraft('');
-    setMobilePanel('contacts');
-  };
 
   const handleContactSelect = (contact) => {
     messagesRequestRef.current.controller?.abort();
@@ -364,13 +352,23 @@ const CrmInbox = () => {
   };
 
   return (
-    <Box sx={{ minWidth: 0, minHeight: '100%', p: { xs: 1.5, sm: 2, lg: 2.5 } }}>
+    <Box
+      sx={{
+        minWidth: 0,
+        height: { xs: 'auto', lg: '100%' },
+        minHeight: 0,
+        p: { xs: 1.5, sm: 2, lg: 2.5 },
+        display: { xs: 'block', lg: 'flex' },
+        flexDirection: 'column',
+        overflow: { xs: 'visible', lg: 'hidden' },
+      }}
+    >
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
         alignItems={{ sm: 'center' }}
         justifyContent="space-between"
         spacing={1.5}
-        sx={{ mb: 2 }}
+        sx={{ mb: 2, flexShrink: 0 }}
       >
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="h5" fontWeight={900} noWrap>Conversaciones</Typography>
@@ -386,16 +384,6 @@ const CrmInbox = () => {
           spacing={1}
           sx={{ width: { xs: '100%', sm: 'auto' }, justifyContent: { sm: 'flex-end' } }}
         >
-          <TextField
-            select
-            size="small"
-            label="Sesión"
-            value={sessionId}
-            onChange={handleSessionChange}
-            sx={{ flex: { xs: '1 1 100%', sm: '0 1 210px' }, minWidth: 0 }}
-          >
-            {sessions.map((item) => <MenuItem key={item.sessionId} value={item.sessionId}>{item.sessionId}</MenuItem>)}
-          </TextField>
           <Tooltip title="Define el modo predeterminado de la sesión. Los chats configurados como excepción mantienen su propio modo.">
             <Paper
               component="label"
@@ -447,7 +435,7 @@ const CrmInbox = () => {
         </Stack>
       </Stack>
 
-      {error && <Alert severity="error" onClose={() => setError('')} sx={{ mb: 2 }}>{error}</Alert>}
+      {error && <Alert severity="error" onClose={() => setError('')} sx={{ mb: 2, flexShrink: 0 }}>{error}</Alert>}
 
       {!sessionId ? (
         <Alert severity="info">Conecta una sesión de WhatsApp para usar el CRM.</Alert>
@@ -458,8 +446,9 @@ const CrmInbox = () => {
           sx={{
             display: 'grid',
             gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: 'minmax(250px, 1fr) minmax(390px, 1.5fr) minmax(250px, 1fr)' },
-            height: { xs: 'auto', lg: 'calc(100dvh - 210px)' },
-            minHeight: { xs: 0, lg: 560 },
+            flex: { lg: 1 },
+            height: { xs: 'auto', lg: 'auto' },
+            minHeight: 0,
             overflow: { xs: 'visible', lg: 'hidden' },
             borderRadius: 3,
             bgcolor: 'background.paper',
@@ -830,6 +819,7 @@ const ImportContactsDialog = ({ open, onClose, sessionId, onImported }) => {
   const theme = useTheme();
   const mobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [form, setForm] = useState(newImportForm);
+  const [sources, setSources] = useState([]);
   const [saved, setSaved] = useState(null);
   const [message, setMessage] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -845,24 +835,21 @@ const ImportContactsDialog = ({ open, onClose, sessionId, onImported }) => {
     // Never carry an integration URL, headers or source id into another
     // WhatsApp session while its own source is still loading.
     setSaved(null);
+    setSources([]);
     setForm(newImportForm());
     setMessage(null);
     setSourceLoading(Boolean(open && sessionId));
     if (!open || !sessionId) return () => controller.abort();
 
-    axios.get(`/api/crm/sessions/${sessionId}/import-sources`, { signal: controller.signal })
+    axios.get(`/api/v1/sessions/${sessionId}/crm/import-sources`, { signal: controller.signal })
       .then(({ data }) => {
         if (sourcesRequestRef.current.id !== requestId) return;
-        const source = data.sources?.[0];
+        const receivedSources = data.sources || [];
+        setSources(receivedSources);
+        const source = receivedSources[0];
         if (!source) return;
         setSaved(source);
-        setForm({
-          ...source,
-          authValue: '',
-          headers: JSON.stringify(source.headers || {}, null, 2),
-          requestBody: JSON.stringify(source.requestBody || {}, null, 2),
-          fieldMapping: JSON.stringify(source.fieldMapping || {}, null, 2),
-        });
+        setForm(importSourceForm(source));
       })
       .catch((error) => {
         if (error.code !== 'ERR_CANCELED' && sourcesRequestRef.current.id === requestId) {
@@ -888,9 +875,15 @@ const ImportContactsDialog = ({ open, onClose, sessionId, onImported }) => {
         requestBody: JSON.parse(form.requestBody || '{}'),
         fieldMapping: JSON.parse(form.fieldMapping || '{}'),
       };
-      const savedResponse = await axios.post(`/api/crm/sessions/${sessionId}/import-sources`, payload);
+      const savedResponse = await axios.post(`/api/v1/sessions/${sessionId}/crm/import-sources`, payload);
       setSaved(savedResponse.data.source);
-      const run = await axios.post(`/api/crm/import-sources/${savedResponse.data.source.id}/run`);
+      setSources((current) => {
+        const exists = current.some((source) => String(source.id) === String(savedResponse.data.source.id));
+        return exists
+          ? current.map((source) => String(source.id) === String(savedResponse.data.source.id) ? savedResponse.data.source : source)
+          : [...current, savedResponse.data.source];
+      });
+      const run = await axios.post(`/api/v1/sessions/${sessionId}/crm/import-sources/${savedResponse.data.source.id}/run`);
       setMessage({ type: 'success', text: `${run.data.imported} clientes importados de ${run.data.totalReceived}` });
       onImported?.();
     } catch (error) {
@@ -902,11 +895,36 @@ const ImportContactsDialog = ({ open, onClose, sessionId, onImported }) => {
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth fullScreen={mobile} maxWidth="md">
-      <DialogTitle>Importar clientes mediante HTTP</DialogTitle>
+      <DialogTitle>Importar clientes en la sesión {sessionId}</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
           {sourceLoading && <Alert severity="info">Cargando la configuración de importación de esta sesión…</Alert>}
           {message && <Alert severity={message.type}>{message.text}</Alert>}
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+            <TextField
+              fullWidth
+              select
+              label="Fuente de esta sesión"
+              value={saved?.id || ''}
+              onChange={(event) => {
+                const source = sources.find((item) => String(item.id) === String(event.target.value));
+                setSaved(source || null);
+                setForm(source ? importSourceForm(source) : newImportForm());
+                setMessage(null);
+              }}
+            >
+              {!sources.length && <MenuItem value="" disabled>No hay fuentes guardadas</MenuItem>}
+              {sources.map((source) => <MenuItem key={source.id} value={source.id}>{source.name}</MenuItem>)}
+            </TextField>
+            <Button
+              variant="outlined"
+              sx={{ flexShrink: 0 }}
+              onClick={() => { setSaved(null); setForm(newImportForm()); setMessage(null); }}
+            >
+              Nueva fuente
+            </Button>
+          </Stack>
+          <TextField fullWidth label="Nombre de la integración" value={form.name || ''} onChange={(event) => setForm({ ...form, name: event.target.value })} />
           <Grid container spacing={2}>
             <Grid item xs={12} sm={4}>
               <TextField fullWidth select label="Método" value={form.method} onChange={(event) => setForm({ ...form, method: event.target.value })}>

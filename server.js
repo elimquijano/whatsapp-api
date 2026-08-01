@@ -10,6 +10,7 @@ import CrmContact from "./src/models/CrmContact.js";
 import "./src/models/CrmImportSource.js";
 import "./src/models/CrmCampaign.js";
 import "./src/models/CrmCampaignRecipient.js";
+import "./src/models/CampaignAiConfig.js";
 import "./src/models/AiPermission.js";
 import "./src/models/AiWorkflowNode.js";
 import "./src/models/AiWorkflowEdge.js";
@@ -24,9 +25,12 @@ import * as authController from "./src/controllers/authController.js";
 import * as userController from "./src/controllers/userController.js";
 import * as aiCrmController from "./src/controllers/aiCrmController.js";
 import * as crmController from "./src/controllers/crmController.js";
+import * as campaignAiController from "./src/controllers/campaignAiController.js";
 import campaignService from "./src/services/campaignService.js";
-import { prepareMediaPayload, sendMediaMessage, sendTextMessage } from "./src/services/messageService.js";
+import { prepareMediaPayload, resolveMediaInput, sendMediaMessage, sendTextMessage } from "./src/services/messageService.js";
 import { runDatabaseMigrations } from "./src/database/migrations.js";
+import { sessionIdFromRequest } from "./src/utils/sessionScope.js";
+import { isInternalLidJid, normalizePhoneNumber, phoneJidFromNumber } from "./src/utils/whatsappIdentity.js";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { Op } from "sequelize";
@@ -35,14 +39,20 @@ const app = express();
 let serverReady = false;
 const standardJsonBody = express.json();
 const largeJsonBody = express.json({ limit: "15mb" });
-const largeJsonRoutes = new Set(["/api/v1/messages/media", "/api/crm/campaigns"]);
+const isLargeJsonRoute = (path, method) => method === "POST" && (
+  path === "/api/v1/messages/media"
+  || path === "/api/crm/campaigns"
+  || /^\/api\/v1\/sessions\/[^/]+\/messages\/media$/.test(path)
+  || /^\/api\/v1\/sessions\/[^/]+\/crm\/campaigns$/.test(path)
+  || /^\/api\/v1\/sessions\/[^/]+\/crm\/campaign-ai\/generate$/.test(path)
+);
 
 app.use(cors());
 // Keep the normal JSON ceiling for every route. The two authenticated routes
 // that accept base64 install their larger parser after authentication.
 app.use((req, res, next) => {
   const normalizedPath = req.path.length > 1 ? req.path.replace(/\/+$/, "") : req.path;
-  if (req.method === "POST" && largeJsonRoutes.has(normalizedPath)) return next();
+  if (isLargeJsonRoute(normalizedPath, req.method)) return next();
   return standardJsonBody(req, res, next);
 });
 app.use(express.urlencoded({ extended: true }));
@@ -125,6 +135,74 @@ const checkMediaMessagingAccess = async (req, res, next) => {
   }
 };
 
+const requestedSessionId = (req) => sessionIdFromRequest(req, { allowLegacyBody: true });
+
+const findOwnedSessionRecord = (userId, sessionId) => WhatsAppSession.findOne({
+  where: { userId, sessionId },
+});
+
+const requireOpenSession = async (req, res) => {
+  const sessionId = requestedSessionId(req);
+  if (!sessionId) {
+    res.status(400).json({
+      success: false,
+      error: "Debes indicar sessionId. La API nunca selecciona una sesión automáticamente.",
+    });
+    return null;
+  }
+
+  const record = await findOwnedSessionRecord(req.user.id, sessionId);
+  if (!record) {
+    res.status(404).json({ success: false, error: "La sesión no existe o no pertenece a tu cuenta" });
+    return null;
+  }
+
+  const live = sessionManager.getSession(req.user.id, sessionId);
+  if (!live || live.status !== "open") {
+    res.status(409).json({ success: false, error: "La sesión de WhatsApp no está conectada" });
+    return null;
+  }
+  return { sessionId, record, live };
+};
+
+const sendText = async (req, res) => {
+  try {
+    const scoped = await requireOpenSession(req, res);
+    if (!scoped) return;
+    const result = await sendTextMessage({
+      sock: scoped.live.sock,
+      recipient: req.body.recipient,
+      body: req.body.body,
+    });
+    res.json({ success: true, sessionId: scoped.sessionId, message_id: result.key.id, status: "sent" });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ success: false, error: error.message });
+  }
+};
+
+const sendMedia = async (req, res) => {
+  try {
+    const scoped = await requireOpenSession(req, res);
+    if (!scoped) return;
+    const { recipient, type, payload, caption, filename } = req.body;
+    const mediaInput = resolveMediaInput({ payload, base64: req.body.base64, mimetype: req.body.mimetype });
+    const preparedMedia = await prepareMediaPayload(mediaInput, req.body.mimetype);
+    const result = await sendMediaMessage({
+      sock: scoped.live.sock,
+      recipient,
+      type,
+      payload: mediaInput,
+      caption,
+      filename,
+      mimetype: req.body.mimetype,
+      preparedMedia,
+    });
+    res.json({ success: true, sessionId: scoped.sessionId, message_id: result.key.id, status: "sent" });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ success: false, error: error.message });
+  }
+};
+
 app.post("/api/auth/login", authController.login);
 app.post("/api/auth/send-otp", authController.sendOTP);
 app.post("/api/auth/register", authController.register);
@@ -137,6 +215,36 @@ app.put("/api/users/:id", authenticateToken, isAdmin, userController.updateUser)
 app.delete("/api/users/:id", authenticateToken, isAdmin, userController.deleteUser);
 app.get("/api/roles", authenticateToken, isAdmin, userController.getRoles);
 app.get("/api/plans", authenticateToken, isAdmin, userController.getPlans);
+
+// API canónica: toda operación funcional vive bajo una sesión explícita.
+app.put("/api/v1/sessions/:sessionId/webhook", authenticateToken, userController.updateWebhook);
+app.get("/api/v1/sessions/:sessionId/ai/config", authenticateToken, aiCrmController.getConfig);
+app.put("/api/v1/sessions/:sessionId/ai/config", authenticateToken, aiCrmController.saveConfig);
+app.put("/api/v1/sessions/:sessionId/ai/toggle", authenticateToken, aiCrmController.toggleAutomation);
+app.post("/api/v1/sessions/:sessionId/ai/presets/sales", authenticateToken, aiCrmController.applySalesPreset);
+app.get("/api/v1/sessions/:sessionId/ai/messages", authenticateToken, aiCrmController.getMessages);
+app.get("/api/v1/sessions/:sessionId/ai/workflow-executions", authenticateToken, aiCrmController.listWorkflowExecutions);
+app.get("/api/v1/sessions/:sessionId/ai/workflow-executions/:executionId", authenticateToken, aiCrmController.getWorkflowExecution);
+app.post("/api/v1/sessions/:sessionId/ai/workflows/tasks/:taskKey/test", authenticateToken, aiCrmController.testWorkflowTask);
+app.get("/api/v1/sessions/:sessionId/crm/contacts", authenticateToken, crmController.listContacts);
+app.get("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages", authenticateToken, crmController.getContactMessages);
+app.put("/api/v1/sessions/:sessionId/crm/contacts/:contactId", authenticateToken, crmController.updateContact);
+app.put("/api/v1/sessions/:sessionId/crm/contacts/:contactId/read", authenticateToken, crmController.markRead);
+app.post("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages", authenticateToken, crmController.sendManualMessage);
+app.get("/api/v1/sessions/:sessionId/crm/import-sources", authenticateToken, crmController.listImportSources);
+app.post("/api/v1/sessions/:sessionId/crm/import-sources", authenticateToken, crmController.saveImportSource);
+app.post("/api/v1/sessions/:sessionId/crm/import-sources/:sourceId/run", authenticateToken, crmController.runImport);
+app.get("/api/v1/sessions/:sessionId/crm/campaigns", authenticateToken, crmController.listCampaigns);
+app.post("/api/v1/sessions/:sessionId/crm/campaigns/audience-preview", authenticateToken, crmController.previewCampaignAudience);
+app.post("/api/v1/sessions/:sessionId/crm/campaigns", authenticateToken, crmController.requireProfessionalAccess, largeJsonBody, crmController.createCampaign);
+app.post("/api/v1/sessions/:sessionId/crm/campaigns/:campaignId/run", authenticateToken, crmController.runCampaign);
+app.post("/api/v1/sessions/:sessionId/crm/campaigns/:campaignId/pause", authenticateToken, crmController.pauseCampaign);
+app.get("/api/v1/sessions/:sessionId/crm/campaign-ai/settings", authenticateToken, campaignAiController.getCampaignAiSettings);
+app.put("/api/v1/sessions/:sessionId/crm/campaign-ai/settings", authenticateToken, campaignAiController.saveCampaignAiSettings);
+app.post("/api/v1/sessions/:sessionId/crm/campaign-ai/generate", authenticateToken, largeJsonBody, campaignAiController.generateCampaignDraft);
+
+// Alias anteriores conservados durante la transición. Los endpoints de
+// mensajería antiguos también exigen account_id; ya no existe fallback.
 app.get("/api/ai/sessions/:sessionId/config", authenticateToken, aiCrmController.getConfig);
 app.put("/api/ai/sessions/:sessionId/config", authenticateToken, aiCrmController.saveConfig);
 app.put("/api/ai/sessions/:sessionId/toggle", authenticateToken, aiCrmController.toggleAutomation);
@@ -158,7 +266,7 @@ app.post("/api/crm/campaigns", authenticateToken, crmController.requireProfessio
 app.post("/api/crm/campaigns/:campaignId/run", authenticateToken, crmController.runCampaign);
 app.post("/api/crm/campaigns/:campaignId/pause", authenticateToken, crmController.pauseCampaign);
 
-app.post("/api/whatsapp/connect", authenticateToken, checkPlanExpiration, async (req, res) => {
+const connectWhatsApp = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
       include: [{ model: Plan, as: 'planData' }]
@@ -166,7 +274,7 @@ app.post("/api/whatsapp/connect", authenticateToken, checkPlanExpiration, async 
 
     const sessionRecords = await WhatsAppSession.findAll({ where: { userId: user.id }, attributes: ['id', 'sessionId'] });
     const maxSessions = user.planData?.maxSessions || 1;
-    const bodySessionId = req.body ? req.body.sessionId : null;
+    const bodySessionId = req.params?.sessionId || (req.body ? req.body.sessionId : null);
     const resetAuth = req.body?.resetAuth === true;
 
     const existingRecord = bodySessionId ? sessionRecords.find(record => record.sessionId === bodySessionId) : null;
@@ -186,6 +294,10 @@ app.post("/api/whatsapp/connect", authenticateToken, checkPlanExpiration, async 
       : await sessionManager.createSession(user.id, sessionId);
     
     if (!session) throw new Error("No se pudo crear o recuperar la sesión");
+    if (user.planData?.features?.includes("ai_crm")) {
+      const sessionRecord = await WhatsAppSession.findOne({ where: { userId: user.id, sessionId } });
+      if (sessionRecord) await aiCrmController.ensureIntroductoryAiConfig(sessionRecord.id);
+    }
 
     res.json({ 
       success: true, 
@@ -197,9 +309,12 @@ app.post("/api/whatsapp/connect", authenticateToken, checkPlanExpiration, async 
     console.error("Error en connect:", error);
     res.status(500).json({ success: false, error: error.message });
   }
-});
+};
 
-app.get("/api/whatsapp/sessions", authenticateToken, async (req, res) => {
+app.post("/api/whatsapp/connect", authenticateToken, checkPlanExpiration, connectWhatsApp);
+app.post("/api/v1/sessions/:sessionId/connect", authenticateToken, checkPlanExpiration, connectWhatsApp);
+
+const listWhatsAppSessions = async (req, res) => {
   try {
     const sessionRecords = await WhatsAppSession.findAll({ where: { userId: req.user.id } });
     const webhooksBySession = new Map(sessionRecords.map(record => [record.sessionId, record.webhookUrl || ""]));
@@ -209,8 +324,12 @@ app.get("/api/whatsapp/sessions", authenticateToken, async (req, res) => {
     const liveBySession = new Map(sessionManager.getUserSessions(req.user.id).map(session => [session.sessionId, session]));
     const sessions = sessionRecords.map(record => {
       const live = liveBySession.get(record.sessionId);
+      const connectedJid = String(live?.sock?.user?.id || "");
+      const phoneNumber = connectedJid ? connectedJid.split(":")[0].split("@")[0] : null;
       return {
         sessionId: record.sessionId,
+        phoneNumber: phoneNumber || record.phoneNumber || null,
+        displayName: live?.sock?.user?.name || record.displayName || null,
         status: live?.status || "disconnected",
         qr: live?.qrDataUrl || null,
         reconnectAttempt: live?.reconnectAttempt || 0,
@@ -224,9 +343,12 @@ app.get("/api/whatsapp/sessions", authenticateToken, async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
-});
+};
 
-app.get("/api/whatsapp/status/:sessionId", authenticateToken, async (req, res) => {
+app.get("/api/whatsapp/sessions", authenticateToken, listWhatsAppSessions);
+app.get("/api/v1/sessions", authenticateToken, listWhatsAppSessions);
+
+const getWhatsAppStatus = async (req, res) => {
   try {
     const session = sessionManager.getSession(req.user.id, req.params.sessionId);
     if (!session) {
@@ -248,56 +370,33 @@ app.get("/api/whatsapp/status/:sessionId", authenticateToken, async (req, res) =
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
-});
+};
 
-// API V1 - MESSAGING CORE
-app.post("/api/v1/messages/text", authenticateToken, checkPlanExpiration, async (req, res) => {
-  const { recipient, body, account_id } = req.body;
-  const session = account_id ? sessionManager.getSession(req.user.id, account_id) : sessionManager.getUserSessions(req.user.id).find(s => s.status === 'open');
-  if (!session) return res.status(404).json({ success: false, error: "Active account not found." });
+app.get("/api/whatsapp/status/:sessionId", authenticateToken, getWhatsAppStatus);
+app.get("/api/v1/sessions/:sessionId/status", authenticateToken, getWhatsAppStatus);
 
+// API V1 - MESSAGING CORE. sessionId es obligatorio tanto en la ruta canónica
+// como en el alias anterior mediante account_id.
+app.post("/api/v1/sessions/:sessionId/messages/text", authenticateToken, checkPlanExpiration, sendText);
+app.post("/api/v1/sessions/:sessionId/messages/media", authenticateToken, checkMediaMessagingAccess, largeJsonBody, sendMedia);
+app.post("/api/v1/messages/text", authenticateToken, checkPlanExpiration, sendText);
+app.post("/api/v1/messages/media", authenticateToken, checkMediaMessagingAccess, largeJsonBody, sendMedia);
+
+const logoutWhatsApp = async (req, res) => {
   try {
-    const result = await sendTextMessage({ sock: session.sock, recipient, body });
-    res.json({ success: true, message_id: result.key.id, status: "sent" });
-  } catch (error) {
-    res.status(error.statusCode || 500).json({ success: false, error: error.message });
-  }
-});
-
-app.post("/api/v1/messages/media", authenticateToken, checkMediaMessagingAccess, largeJsonBody, async (req, res) => {
-  try {
-    const { recipient, type, payload, caption, filename, account_id } = req.body;
-    const session = account_id ? sessionManager.getSession(req.user.id, account_id) : sessionManager.getUserSessions(req.user.id).find(s => s.status === 'open');
-    if (!session) return res.status(404).json({ success: false, error: "Active account not found." });
-
-    const preparedMedia = await prepareMediaPayload(payload, req.body.mimetype);
-    const result = await sendMediaMessage({
-      sock: session.sock,
-      recipient,
-      type,
-      payload,
-      caption,
-      filename,
-      mimetype: req.body.mimetype,
-      preparedMedia,
-    });
-    res.json({ success: true, message_id: result.key.id, status: "sent" });
-  } catch (error) {
-    res.status(error.statusCode || 500).json({ success: false, error: error.message });
-  }
-});
-
-app.post("/api/whatsapp/logout", authenticateToken, async (req, res) => {
-  try {
-    const { sessionId } = req.body;
+    const sessionId = requestedSessionId(req);
     if (!sessionId) return res.status(400).json({ success: false, error: "Debe proporcionar el sessionId" });
-    
+    const record = await findOwnedSessionRecord(req.user.id, sessionId);
+    if (!record) return res.status(404).json({ success: false, error: "La sesión no existe o no pertenece a tu cuenta" });
     await sessionManager.disconnectSession(req.user.id, sessionId, { logout: true, archiveAuth: true });
     res.json({ success: true, status: "disconnected", message: "WhatsApp fue desvinculado; la configuración CRM permanece guardada" });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
-});
+};
+
+app.post("/api/whatsapp/logout", authenticateToken, logoutWhatsApp);
+app.post("/api/v1/sessions/:sessionId/logout", authenticateToken, logoutWhatsApp);
 
 app.use((error, req, res, next) => {
   if (error?.type === "entity.too.large") {
@@ -349,11 +448,15 @@ const startServer = async () => {
     // Vincula mensajes creados antes del CRM con su ficha de contacto.
     const messagesWithoutContact = await AiMessage.findAll({ where: { crmContactId: null }, limit: 5000 });
     for (const message of messagesWithoutContact) {
+      if (isInternalLidJid(message.contactJid)) continue;
+      const phone = normalizePhoneNumber(message.contactJid || message.contactNumber);
+      const contactJid = phoneJidFromNumber(phone);
+      if (!phone || !contactJid) continue;
       const [contact] = await CrmContact.findOrCreate({
-        where: { whatsappSessionId: message.whatsappSessionId, phone: message.contactNumber },
-        defaults: { contactJid: message.contactJid, status: "new", source: "whatsapp", lastMessageAt: message.messageTimestamp || message.createdAt, lastMessagePreview: message.content.slice(0, 500) },
+        where: { whatsappSessionId: message.whatsappSessionId, phone },
+        defaults: { contactJid, status: "new", source: "whatsapp", lastMessageAt: message.messageTimestamp || message.createdAt, lastMessagePreview: message.content.slice(0, 500) },
       });
-      await message.update({ crmContactId: contact.id });
+      await message.update({ crmContactId: contact.id, contactNumber: phone, contactJid });
     }
 
     // Migra webhooks guardados anteriormente como JSON a la tabla normalizada.
@@ -424,6 +527,24 @@ const startServer = async () => {
       }
     }
 
+    // Toda sesión Profesional nace con un ejemplo seguro y pausado. No se
+    // sobrescriben configuraciones o agentes que el usuario ya haya creado.
+    const professionalUsers = await User.findAll({ where: { planId: professionalPlan.id }, attributes: ["id"] });
+    const professionalUserIds = professionalUsers.map((user) => user.id);
+    if (professionalUserIds.length) {
+      const professionalSessions = await WhatsAppSession.findAll({
+        where: { userId: { [Op.in]: professionalUserIds } },
+        attributes: ["id", "sessionId"],
+      });
+      for (const session of professionalSessions) {
+        try {
+          await aiCrmController.ensureIntroductoryAiConfig(session.id);
+        } catch (error) {
+          console.warn(`No se pudo crear el ejemplo IA de la sesión ${session.sessionId}: ${error.message}`);
+        }
+      }
+    }
+
     const userCount = await User.count();
     if (userCount === 0) {
       await User.create({
@@ -431,8 +552,7 @@ const startServer = async () => {
         whatsappNumber: process.env.INITIAL_ADMIN_WHATSAPP || "5215500000000",
         password: process.env.INITIAL_ADMIN_PASSWORD || "admin_password_123",
         roleId: adminRole.id,
-        planId: trialPlan.id,
-        whatsappSessionId: "admin_session_root"
+        planId: trialPlan.id
       });
       console.log(`👤 Usuario admin creado: ${process.env.INITIAL_ADMIN_USERNAME || "admin"}`);
     } else {

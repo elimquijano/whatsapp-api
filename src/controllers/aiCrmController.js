@@ -301,8 +301,10 @@ const persistAgents = async (config, submittedAgents, transaction) => {
 export const getConfig = async (req, res) => {
   try {
     if (!await requireProfessional(req.user.id)) return res.status(403).json({ success: false, error: "La IA CRM está disponible únicamente en el plan Profesional" });
+    const ownedSession = await WhatsAppSession.findOne({ where: { userId: req.user.id, sessionId: req.params.sessionId } });
+    if (!ownedSession) return res.status(404).json({ success: false, error: "Sesión no encontrada" });
+    await ensureIntroductoryAiConfig(ownedSession.id);
     let session = await sessionBundle(req.user.id, req.params.sessionId);
-    if (!session) return res.status(404).json({ success: false, error: "Sesión no encontrada" });
     if (session.aiConfig && !session.aiConfig.mainWorkflow) {
       await ensureMainWorkflow(session.aiConfig, session.aiConfig.permissions || []);
       session = await sessionBundle(req.user.id, req.params.sessionId);
@@ -365,7 +367,7 @@ export const toggleAutomation = async (req, res) => {
     if (!await requireProfessional(req.user.id)) return res.status(403).json({ success: false, error: "La IA CRM está disponible únicamente en el plan Profesional" });
     const session = await WhatsAppSession.findOne({ where: { userId: req.user.id, sessionId: req.params.sessionId } });
     if (!session) return res.status(404).json({ success: false, error: "Sesión no encontrada" });
-    const [config] = await AiSessionConfig.findOrCreate({ where: { whatsappSessionId: session.id } });
+    const config = await ensureIntroductoryAiConfig(session.id);
     config.autoReplyEnabled = Boolean(req.body.enabled);
     await config.save();
     res.json({ success: true, autoReplyEnabled: config.autoReplyEnabled });
@@ -379,7 +381,7 @@ export const buildResponderPreset = () => ({
       outputMode: "direct_whatsapp",
       agentName: "Asistente virtual",
       role: "Asistente de atención configurado por la organización",
-      context: "Describe aquí la organización, su actividad, horarios, alcance, políticas y la información que el asistente puede comunicar.",
+      context: "Ejemplo inicial: Somos [nombre de la organización]. Atendemos [servicio o actividad] de [horario]. Reemplaza este texto con información real antes de activar las respuestas automáticas.",
       systemPrompt: `Responde con claridad, amabilidad y precisión, usando mensajes breves para WhatsApp.
   El contexto configurado y la evidencia producida por integraciones autorizadas son las fuentes de verdad. El historial solo aporta continuidad y no demuestra hechos por sí mismo.
   No inventes información. Cuando una solicitud corresponda a una tarea especializada habilitada, deja que esa tarea la resuelva.`,
@@ -413,7 +415,7 @@ Historial: {{history}}
   - Si falta información confiable, reconócelo o haz una sola pregunta concreta.`,
       ignoreUnrelatedMessages: true,
       responseValidationEnabled: true,
-      responseValidationFailureMode: "block",
+      responseValidationFailureMode: "use_proposed",
       aiProvider: "openai",
       aiApiUrl: "https://api.openai.com/v1/chat/completions",
       aiModel: "gpt-4o-mini",
@@ -464,6 +466,20 @@ Historial: {{history}}
           ],
         },
       ],
+});
+
+export const ensureIntroductoryAiConfig = async (whatsappSessionId) => sequelize.transaction(async (transaction) => {
+  const preset = buildResponderPreset();
+  const values = Object.fromEntries(configFields.map((field) => [field, preset[field]]));
+  const [config] = await AiSessionConfig.findOrCreate({
+    where: { whatsappSessionId },
+    defaults: { whatsappSessionId, ...values, aiApiToken: null },
+    transaction,
+  });
+  let agents = await AiPermission.findAll({ where: { aiSessionConfigId: config.id }, transaction });
+  if (!agents.length) agents = await persistAgents(config, preset.permissions, transaction);
+  await ensureMainWorkflow(config, agents, transaction);
+  return config;
 });
 
 export const applySalesPreset = async (req, res) => {
@@ -608,7 +624,7 @@ export const testWorkflowTask = async (req, res) => {
             safeMode: true,
             executionId,
             status: "running",
-            pollUrl: `/api/ai/sessions/${encodeURIComponent(req.params.sessionId)}/workflow-executions/${executionId}`,
+            pollUrl: `/api/v1/sessions/${encodeURIComponent(req.params.sessionId)}/ai/workflow-executions/${executionId}`,
             blockedOperations: ["http_request:POST", "http_request:PUT", "http_request:PATCH", "http_request:DELETE", "whatsapp_output"],
           });
         }

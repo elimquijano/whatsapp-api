@@ -6,14 +6,15 @@ import crypto from "crypto";
 import { Op } from "sequelize";
 
 import sessionManager from "../manager/SessionManager.js";
+import { normalizePhoneNumber, phoneJidFromNumber } from "../utils/whatsappIdentity.js";
 
 // Almacén temporal de OTPs (En producción usar Redis o una tabla)
 const otpStore = new Map();
 
 export const sendOTP = async (req, res) => {
   try {
-    const { whatsappNumber } = req.body;
-    if (!whatsappNumber) return res.status(400).json({ success: false, error: "Número requerido" });
+    const whatsappNumber = normalizePhoneNumber(req.body.whatsappNumber);
+    if (!whatsappNumber) return res.status(400).json({ success: false, error: "Número de WhatsApp inválido" });
 
     // Verificar si el número ya existe
     const existingUser = await User.findOne({ where: { whatsappNumber } });
@@ -32,7 +33,7 @@ export const sendOTP = async (req, res) => {
       return res.status(503).json({ success: false, error: "Servicio de verificación temporalmente fuera de línea. Contacte soporte." });
     }
 
-    await adminSession.sock.sendMessage(`${whatsappNumber}@s.whatsapp.net`, { 
+    await adminSession.sock.sendMessage(phoneJidFromNumber(whatsappNumber), {
       text: `*WA-API PRO*\n\nTu código de verificación es: *${otp}*\n\nEste código expira en 10 minutos.` 
     });
 
@@ -49,7 +50,7 @@ export const login = async (req, res) => {
 
     const user = await User.findOne({
       where: {
-        [Op.or]: [{ username: identifier }, { whatsappNumber: identifier }]
+        [Op.or]: [{ username: identifier }, { whatsappNumber: normalizePhoneNumber(identifier) || identifier }]
       },
       include: [
         { model: Role, as: 'roleData' },
@@ -113,7 +114,9 @@ export const login = async (req, res) => {
 
 export const register = async (req, res) => {
   try {
-    const { username, password, whatsappNumber, code } = req.body;
+    const { username, password, code } = req.body;
+    const whatsappNumber = normalizePhoneNumber(req.body.whatsappNumber);
+    if (!whatsappNumber) return res.status(400).json({ success: false, error: "Número de WhatsApp inválido" });
     
     // Validar OTP
     const stored = otpStore.get(whatsappNumber);
@@ -134,7 +137,6 @@ export const register = async (req, res) => {
       roleId: userRole?.id || 2,
       planId: trialPlan?.id,
       expirationDate,
-      whatsappSessionId: crypto.randomBytes(8).toString("hex"),
       apiKey: `sk_${crypto.randomBytes(24).toString("hex")}`,
     });
 

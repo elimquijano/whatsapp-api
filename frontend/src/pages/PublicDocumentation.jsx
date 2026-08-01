@@ -128,25 +128,27 @@ const PublicDocumentation = () => {
               Todas las peticiones a la API deben incluir el encabezado <code>Authorization</code> con tu token Bearer.
             </Typography>
             <CodeBlock code={`Authorization: Bearer YOUR_API_TOKEN`} />
+            <Typography paragraph sx={{ mt: 2 }}>
+              La API key identifica tu cuenta. La sesión de WhatsApp siempre se indica en la URL y nunca se selecciona automáticamente.
+            </Typography>
           </Section>
 
           <Section id="messages-text" title="1. Mensajes de Texto">
             <Typography paragraph>Envía mensajes de texto simples a cualquier número de WhatsApp.</Typography>
             <Chip label="POST" color="warning" size="small" sx={{ mr: 1, fontWeight: 800 }} /> 
-            <code style={{ fontWeight: 600 }}>/api/v1/messages/text</code>
+            <code style={{ fontWeight: 600 }}>/api/v1/sessions/SESSION_ID/messages/text</code>
             
             <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Body (JSON)</Typography>
             <CodeBlock code={`{
   "recipient": "5215500000000", // Código país + número (sin +)
-  "body": "Hola, este es un mensaje de prueba.",
-  "account_id": "session_id_opcional" // Si tienes múltiples sesiones
+  "body": "Hola, este es un mensaje de prueba."
 }`} />
           </Section>
 
           <Section id="messages-media-url" title="2. Media vía URL (Imagen/Video)">
             <Typography paragraph>Envía imágenes o videos proporcionando una URL pública accesible.</Typography>
             <Chip label="POST" color="warning" size="small" sx={{ mr: 1, fontWeight: 800 }} /> 
-            <code style={{ fontWeight: 600 }}>/api/v1/messages/media</code>
+            <code style={{ fontWeight: 600 }}>/api/v1/sessions/SESSION_ID/messages/media</code>
 
             <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Body (JSON)</Typography>
             <CodeBlock code={`{
@@ -158,15 +160,16 @@ const PublicDocumentation = () => {
           </Section>
 
           <Section id="messages-media-base64" title="3. Media vía Base64">
-            <Typography paragraph>Envía archivos multimedia codificados directamente en el cuerpo de la petición. Ideal para archivos locales.</Typography>
+            <Typography paragraph>Envía imágenes, video o audio codificados directamente en el cuerpo. Puedes usar Base64 puro con <code>mimetype</code>, o un data URI completo en <code>payload</code>.</Typography>
             <Chip label="POST" color="warning" size="small" sx={{ mr: 1, fontWeight: 800 }} /> 
-            <code style={{ fontWeight: 600 }}>/api/v1/messages/media</code>
+            <code style={{ fontWeight: 600 }}>/api/v1/sessions/SESSION_ID/messages/media</code>
 
             <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Body (JSON)</Typography>
             <CodeBlock code={`{
   "recipient": "5215500000000",
-  "type": "image",
-  "payload": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD...",
+  "type": "image", // también "video" o "audio"
+  "base64": "/9j/4AAQSkZJRgABAQEASABIAAD...",
+  "mimetype": "image/jpeg",
   "caption": "Imagen subida desde base64"
 }`} />
           </Section>
@@ -174,7 +177,7 @@ const PublicDocumentation = () => {
           <Section id="messages-doc-url" title="4. Documentos vía URL">
             <Typography paragraph>Envía PDFs, Excels, Word, etc., mediante URL.</Typography>
             <Chip label="POST" color="warning" size="small" sx={{ mr: 1, fontWeight: 800 }} /> 
-            <code style={{ fontWeight: 600 }}>/api/v1/messages/media</code>
+            <code style={{ fontWeight: 600 }}>/api/v1/sessions/SESSION_ID/messages/media</code>
 
             <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Body (JSON)</Typography>
             <CodeBlock code={`{
@@ -186,15 +189,16 @@ const PublicDocumentation = () => {
           </Section>
 
           <Section id="messages-doc-base64" title="5. Documentos vía Base64">
-            <Typography paragraph>Envía documentos codificados en Base64.</Typography>
+            <Typography paragraph>Envía documentos con Base64 puro y declara el tipo MIME. También se mantiene compatible el formato data URI dentro de <code>payload</code>.</Typography>
             <Chip label="POST" color="warning" size="small" sx={{ mr: 1, fontWeight: 800 }} /> 
-            <code style={{ fontWeight: 600 }}>/api/v1/messages/media</code>
+            <code style={{ fontWeight: 600 }}>/api/v1/sessions/SESSION_ID/messages/media</code>
 
             <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Body (JSON)</Typography>
             <CodeBlock code={`{
   "recipient": "5215500000000",
   "type": "document",
-  "payload": "data:application/pdf;base64,JVBERi0xLjQKJ...",
+  "base64": "JVBERi0xLjQKJ...",
+  "mimetype": "application/pdf",
   "filename": "Reporte_Mensual.pdf"
 }`} />
           </Section>
@@ -204,14 +208,14 @@ const PublicDocumentation = () => {
               Envía audios. Si el formato es compatible (mp3, ogg), se puede enviar como PTT (Push To Talk - nota de voz).
             </Typography>
             <Chip label="POST" color="warning" size="small" sx={{ mr: 1, fontWeight: 800 }} /> 
-            <code style={{ fontWeight: 600 }}>/api/v1/messages/media</code>
+            <code style={{ fontWeight: 600 }}>/api/v1/sessions/SESSION_ID/messages/media</code>
 
             <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Body (JSON)</Typography>
             <CodeBlock code={`{
   "recipient": "5215500000000",
   "type": "audio",
-  "payload": "https://example.com/audio.mp3" 
-  // O base64: "data:audio/mp3;base64,..."
+  "payload": "https://example.com/audio.mp3"
+  // O: "base64": "SUQz...", "mimetype": "audio/mpeg"
 }`} />
           </Section>
 

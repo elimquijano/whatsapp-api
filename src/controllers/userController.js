@@ -11,7 +11,7 @@ export const getProfile = async (req, res) => {
         { model: Role, as: 'roleData', attributes: ['name', 'permissions'] },
         { model: Plan, as: 'planData', attributes: ['name', 'maxSessions', 'features'] }
       ],
-      attributes: { exclude: ['password'] }
+      attributes: { exclude: ['password', 'whatsappSessionId', 'webhookUrl', 'sessionWebhooks'] }
     });
 
     if (!user) return res.status(404).json({ success: false, error: "Usuario no encontrado" });
@@ -32,7 +32,8 @@ export const getProfile = async (req, res) => {
 
 export const updateWebhook = async (req, res) => {
   try {
-    const { webhookUrl, sessionId } = req.body;
+    const { webhookUrl } = req.body;
+    const sessionId = String(req.params?.sessionId || req.body.sessionId || "").trim();
     if (!sessionId) {
       return res.status(400).json({ success: false, error: "Debes indicar la sesión de WhatsApp" });
     }
@@ -46,10 +47,6 @@ export const updateWebhook = async (req, res) => {
     if (!user.planData?.features?.includes('webhook')) {
       return res.status(403).json({ success: false, error: "Tu plan no incluye webhooks" });
     }
-    if (!sessionManager.getSession(user.id, sessionId)) {
-      return res.status(404).json({ success: false, error: "La sesión indicada no existe" });
-    }
-
     const sessionRecord = await WhatsAppSession.findOne({ where: { userId: user.id, sessionId } });
     if (!sessionRecord) {
       return res.status(404).json({ success: false, error: "La sesión no está registrada" });
@@ -70,7 +67,7 @@ export const getAllUsers = async (req, res) => {
         { model: Role, as: 'roleData', attributes: ['name', 'permissions'] },
         { model: Plan, as: 'planData', attributes: ['name', 'maxSessions'] }
       ],
-      attributes: { exclude: ['password'] }
+      attributes: { exclude: ['password', 'whatsappSessionId', 'webhookUrl', 'sessionWebhooks'] }
     });
     
     const formattedUsers = users.map(u => ({
@@ -125,7 +122,6 @@ export const createUser = async (req, res) => {
       });
     }
 
-    const whatsappSessionId = crypto.randomBytes(8).toString("hex");
     const apiKey = `sk_${crypto.randomBytes(24).toString("hex")}`;
 
     const user = await User.create({
@@ -135,7 +131,6 @@ export const createUser = async (req, res) => {
       roleId,
       planId,
       expirationDate,
-      whatsappSessionId,
       apiKey
     });
 

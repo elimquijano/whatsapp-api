@@ -12,6 +12,17 @@ const addColumnIfMissing = async (queryInterface, table, description, name, defi
 // creates duplicate indexes in MySQL on repeated starts in this project.
 export const runDatabaseMigrations = async (sequelize) => {
   const queryInterface = sequelize.getQueryInterface();
+  const sessionTable = "WhatsAppSessions";
+  const sessionDescription = await queryInterface.describeTable(sessionTable);
+  await addColumnIfMissing(queryInterface, sessionTable, sessionDescription, "phoneNumber", {
+    type: DataTypes.STRING,
+    allowNull: true,
+  });
+  await addColumnIfMissing(queryInterface, sessionTable, sessionDescription, "displayName", {
+    type: DataTypes.STRING,
+    allowNull: true,
+  });
+
   const table = "CrmCampaigns";
   const description = await queryInterface.describeTable(table);
 

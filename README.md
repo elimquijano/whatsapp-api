@@ -69,22 +69,22 @@ Este proyecto es una plataforma completa para gestionar múltiples sesiones de W
 - `frontend/`: Aplicación React + Material UI.
 - `sessions/`: Carpeta (ignorada por git) donde se guardan los archivos de autenticación de cada usuario.
 
-## API Endpoints (Protegidos con JWT)
+## API Endpoints (protegidos con JWT o API key)
+
+La credencial autentica la cuenta y `:sessionId` delimita siempre la sesión de WhatsApp. Ningún endpoint de envío selecciona automáticamente la primera sesión conectada.
 - `POST /api/auth/login`: Iniciar sesión.
 - `POST /api/auth/register`: Registrar nuevo usuario (incluye generación automática de `sessionId`).
-- `POST /api/whatsapp/connect`: Inicializa el proceso de conexión para el usuario.
-- `GET /api/whatsapp/status`: Obtiene el estado y el código QR.
-- `POST /api/whatsapp/send-text`: Envía un mensaje desde la sesión del usuario.
-- `POST /api/whatsapp/logout`: Desconecta WhatsApp del usuario.
-- `GET /api/ai/sessions/:sessionId/config`: Obtiene agente, modelo, permisos y grafo de nodos de una sesión Profesional.
-- `PUT /api/ai/sessions/:sessionId/config`: Guarda la configuración completa y sus credenciales cifradas.
-- `PUT /api/ai/sessions/:sessionId/toggle`: Cambia entre atención manual y respuesta automática.
-- `POST /api/ai/sessions/:sessionId/presets/sales`: Aplica una plantilla inicial de ventas generales.
-- `GET /api/ai/sessions/:sessionId/messages`: Consulta las conversaciones persistidas en BD.
-- `GET /api/crm/sessions/:sessionId/contacts`: Lista y prioriza los contactos de una sesión.
-- `PUT /api/crm/contacts/:contactId`: Cambia clasificación, prioridad, notas, etiquetas o atención humana/IA.
-- `POST /api/crm/contacts/:contactId/messages`: Envía una respuesta manual y toma únicamente ese chat.
-- `POST /api/crm/sessions/:sessionId/import-sources`: Guarda una integración HTTP para importar clientes.
-- `POST /api/crm/import-sources/:sourceId/run`: Ejecuta la importación y actualiza clientes.
-- `GET|POST /api/crm/campaigns`: Consulta o crea campañas segmentadas.
-- `POST /api/crm/campaigns/:campaignId/run`: Inicia una campaña de difusión.
+- `GET /api/v1/sessions`: Lista las sesiones de la cuenta.
+- `POST /api/v1/sessions/:sessionId/connect|logout`: Vincula nuevamente o desvincula una sesión.
+- `POST /api/v1/sessions/:sessionId/messages/text|media`: Envía desde la sesión indicada.
+  En `media`, `type` puede ser `image`, `video`, `audio` o `document`; el archivo se entrega como URL/data URI en `payload` o como Base64 puro en `base64` junto con `mimetype` (máximo 10 MB).
+- `GET|PUT /api/v1/sessions/:sessionId/ai/config`: Consulta o guarda los agentes y workflows de una sesión Profesional.
+- `PUT /api/v1/sessions/:sessionId/ai/toggle`: Cambia la automatización de esa sesión.
+- `GET /api/v1/sessions/:sessionId/crm/contacts`: Lista los contactos de esa sesión.
+- `PUT|POST /api/v1/sessions/:sessionId/crm/contacts/:contactId/...`: Administra un contacto dentro de su sesión.
+- `GET|POST /api/v1/sessions/:sessionId/crm/import-sources`: Administra importaciones de esa sesión.
+- `POST /api/v1/sessions/:sessionId/crm/import-sources/:sourceId/run`: Importa clientes en esa sesión.
+- `GET|POST /api/v1/sessions/:sessionId/crm/campaigns`: Consulta o crea campañas de esa sesión.
+- `POST /api/v1/sessions/:sessionId/crm/campaigns/:campaignId/run|pause`: Controla una campaña de esa sesión.
+- `GET|PUT /api/v1/sessions/:sessionId/crm/campaign-ai/settings`: Configura el asistente de campañas de esa sesión, heredando la IA de flujos o usando proveedor/modelo/token propios.
+- `POST /api/v1/sessions/:sessionId/crm/campaign-ai/generate`: Genera estrategia, audiencia sugerida, copy editable, brief visual, prompt de imagen y checklist usando el contexto empresarial de la sesión.

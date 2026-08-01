@@ -1,46 +1,32 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Paper, Typography, Box, TextField, Button,
-  Alert, CircularProgress, InputAdornment, MenuItem
+  Alert, CircularProgress, InputAdornment
 } from '@mui/material';
 import { Send, PhoneAndroid, Message, AccountTree } from '@mui/icons-material';
 import axios from 'axios';
+import { useOutletContext, useParams } from 'react-router-dom';
 
 const MessageSender = () => {
-  const [sessions, setSessions] = useState([]);
-  const [selectedSession, setSelectedSession] = useState('');
+  const { sessionId = '' } = useParams();
+  const { session } = useOutletContext();
   const [number, setNumber] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  const [fetchingSessions, setFetchingSessions] = useState(true);
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
 
-  const fetchSessions = async () => {
-    try {
-      const response = await axios.get('/api/whatsapp/sessions');
-      const openSessions = (response.data.sessions || []).filter(s => s.status === 'open');
-      setSessions(openSessions);
-      if (openSessions.length > 0 && !selectedSession) {
-        setSelectedSession(openSessions[0].sessionId);
-      }
-    } catch (err) {
-      console.error("Error al cargar sesiones para envío");
-    } finally {
-      setFetchingSessions(false);
-    }
-  };
-
   useEffect(() => {
-    fetchSessions();
-    const interval = setInterval(fetchSessions, 10000);
-    return () => clearInterval(interval);
-  }, []);
+    setNumber('');
+    setMessage('');
+    setSuccess('');
+    setError('');
+  }, [sessionId]);
 
   const handleSend = async (e) => {
     e.preventDefault();
-    if (!selectedSession) {
-      setError('Debes seleccionar una sesión conectada');
+    if (!sessionId || session?.status !== 'open') {
+      setError('Esta sesión debe estar conectada para enviar mensajes');
       return;
     }
 
@@ -49,10 +35,9 @@ const MessageSender = () => {
     setError('');
 
     try {
-      const response = await axios.post('/api/v1/messages/text', {
+      const response = await axios.post(`/api/v1/sessions/${sessionId}/messages/text`, {
         recipient: number,
-        body: message,
-        account_id: selectedSession
+        body: message
       });
       setSuccess(`Mensaje enviado con ID: ${response.data.message_id}`);
       setMessage('');
@@ -80,31 +65,20 @@ const MessageSender = () => {
 
       <Box component="form" onSubmit={handleSend} sx={{ mt: 2 }}>
         <TextField
-          select
           fullWidth
           label="Enviar desde"
-          value={selectedSession}
-          onChange={(e) => setSelectedSession(e.target.value)}
+          value={sessionId}
           sx={{ mb: 3 }}
-          disabled={fetchingSessions || sessions.length === 0}
+          helperText={session?.status === 'open' ? 'Sesión conectada' : 'La sesión no está conectada'}
           InputProps={{
+            readOnly: true,
             startAdornment: (
               <InputAdornment position="start">
                 <AccountTree />
               </InputAdornment>
             ),
           }}
-        >
-          {sessions.length === 0 ? (
-            <MenuItem value=""><em>No hay sesiones conectadas</em></MenuItem>
-          ) : (
-            sessions.map((s) => (
-              <MenuItem key={s.sessionId} value={s.sessionId}>
-                Sesión: {s.sessionId}
-              </MenuItem>
-            ))
-          )}
-        </TextField>
+        />
 
         <TextField
           fullWidth
@@ -143,11 +117,11 @@ const MessageSender = () => {
           variant="contained"
           size="large"
           fullWidth
-          disabled={loading || sessions.length === 0}
+          disabled={loading || session?.status !== 'open'}
           startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <Send />}
           sx={{ py: 1.25 }}
         >
-          {loading ? 'Enviando...' : sessions.length === 0 ? 'Conecta un número primero' : 'Enviar Mensaje'}
+          {loading ? 'Enviando...' : session?.status !== 'open' ? 'Conecta esta sesión primero' : 'Enviar Mensaje'}
         </Button>
       </Box>
     </Paper>

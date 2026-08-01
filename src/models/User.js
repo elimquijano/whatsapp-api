@@ -25,6 +25,8 @@ const User = sequelize.define("User", {
     allowNull: false,
   },
   whatsappSessionId: {
+    // Campo legado conservado solo para compatibilidad con bases existentes.
+    // La identidad real de cada sesión vive en WhatsAppSessions.
     type: DataTypes.STRING,
     allowNull: true,
     unique: true,

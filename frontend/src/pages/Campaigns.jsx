@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Box,
@@ -32,6 +32,7 @@ import {
 } from '@mui/material';
 import {
   Add,
+  AutoAwesome,
   Campaign,
   CheckCircleOutline,
   Close,
@@ -49,6 +50,7 @@ import {
 } from '@mui/icons-material';
 import { alpha } from '@mui/material/styles';
 import axios from 'axios';
+import { useParams } from 'react-router-dom';
 
 const statusLabels = {
   new: 'Nuevo',
@@ -80,6 +82,51 @@ const campaignColors = {
 const steps = ['Audiencia', 'Mensaje', 'Programación y revisión'];
 
 const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
+
+const newCampaignForm = (sessionId = '') => ({
+  sessionId,
+  name: '',
+  messageType: 'text',
+  message: '',
+  mediaUrl: '',
+  mediaPayload: '',
+  mediaBase64: '',
+  mediaSource: 'upload',
+  mediaMimeType: '',
+  mediaFilename: '',
+  mediaSize: 0,
+  statuses: ['interested', 'follow_up', 'customer'],
+  nameTerms: '',
+  nameMatchMode: 'any',
+  delayMs: 1500,
+  scheduledAt: '',
+});
+
+const initialAiSettings = {
+  mode: 'inherit',
+  aiProvider: 'openai_compatible',
+  aiApiUrl: '',
+  aiModel: '',
+  aiApiToken: '',
+  brandVoice: '',
+  campaignInstructions: '',
+  inherited: {},
+};
+
+const initialAiRequest = {
+  objective: '',
+  offer: '',
+  audience: '',
+  tone: 'Cercano, claro y profesional',
+  constraints: '',
+};
+
+const providerApiUrls = {
+  openai: 'https://api.openai.com/v1/chat/completions',
+  groq: 'https://api.groq.com/openai/v1/chat/completions',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
+  openai_compatible: '',
+};
 
 const mediaTypeLabels = {
   image: 'Imagen',
@@ -176,44 +223,37 @@ const ReviewBlock = ({ icon, title, children }) => (
 );
 
 const Campaigns = () => {
+  const { sessionId = '' } = useParams();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [campaigns, setCampaigns] = useState([]);
-  const [sessions, setSessions] = useState([]);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [captionGenerating, setCaptionGenerating] = useState(false);
+  const [captionNotice, setCaptionNotice] = useState('');
+  const [captionImageDescription, setCaptionImageDescription] = useState('');
+  const [audiencePreview, setAudiencePreview] = useState({ count: null, samples: [], error: '' });
+  const [audiencePreviewLoading, setAudiencePreviewLoading] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
-  const [form, setForm] = useState({
-    sessionId: '',
-    name: '',
-    messageType: 'text',
-    message: '',
-    mediaUrl: '',
-    mediaPayload: '',
-    mediaMimeType: '',
-    mediaFilename: '',
-    mediaSize: 0,
-    statuses: ['interested', 'follow_up', 'customer'],
-    delayMs: 1500,
-    scheduledAt: '',
-  });
+  const [form, setForm] = useState(() => newCampaignForm(sessionId));
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiSettings, setAiSettings] = useState(initialAiSettings);
+  const [aiRequest, setAiRequest] = useState(initialAiRequest);
+  const [aiDraft, setAiDraft] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiSaving, setAiSaving] = useState(false);
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiError, setAiError] = useState('');
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
-      const [campaignResponse, sessionResponse] = await Promise.all([
-        axios.get('/api/crm/campaigns'),
-        axios.get('/api/whatsapp/sessions'),
-      ]);
+      const campaignResponse = await axios.get(`/api/v1/sessions/${sessionId}/crm/campaigns`);
       setCampaigns(campaignResponse.data.campaigns || []);
-      setSessions(sessionResponse.data.sessions || []);
       setForm((current) => ({
         ...current,
-        sessionId:
-          current.sessionId ||
-          sessionResponse.data.sessions?.[0]?.sessionId ||
-          '',
+        sessionId,
       }));
     } catch (err) {
       setError(
@@ -222,41 +262,102 @@ const Campaigns = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [sessionId]);
+
+  useEffect(() => {
+    setCampaigns([]);
+    setLoading(true);
+    setOpen(false);
+    setCaptionNotice('');
+    setCaptionImageDescription('');
+    setAiOpen(false);
+    setAiDraft(null);
+    setForm(newCampaignForm(sessionId));
+  }, [sessionId]);
 
   useEffect(() => {
     load();
     const timer = setInterval(load, 5000);
     return () => clearInterval(timer);
-  }, []);
+  }, [load]);
+
+  useEffect(() => {
+    if (!open || activeStep !== 0 || !sessionId) return undefined;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setAudiencePreviewLoading(true);
+      try {
+        const response = await axios.post(
+          `/api/v1/sessions/${sessionId}/crm/campaigns/audience-preview`,
+          {
+            filters: {
+              statuses: form.statuses,
+              nameTerms: form.nameTerms,
+              nameMatchMode: form.nameMatchMode,
+            },
+          },
+          { signal: controller.signal },
+        );
+        setAudiencePreview({
+          count: Number(response.data.count || 0),
+          samples: response.data.samples || [],
+          error: '',
+        });
+      } catch (err) {
+        if (err.code !== 'ERR_CANCELED') {
+          setAudiencePreview({ count: null, samples: [], error: err.response?.data?.error || 'No se pudo calcular la audiencia' });
+        }
+      } finally {
+        if (!controller.signal.aborted) setAudiencePreviewLoading(false);
+      }
+    }, 350);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [open, activeStep, sessionId, form.statuses, form.nameTerms, form.nameMatchMode]);
 
   const create = async () => {
     setCreating(true);
     try {
       const campaignPayload = { ...form };
       delete campaignPayload.mediaSize;
+      delete campaignPayload.mediaSource;
+      delete campaignPayload.nameTerms;
+      delete campaignPayload.nameMatchMode;
       if (campaignPayload.messageType === 'text') {
         campaignPayload.mediaUrl = '';
         campaignPayload.mediaPayload = '';
+        campaignPayload.mediaBase64 = '';
         campaignPayload.mediaMimeType = '';
         campaignPayload.mediaFilename = '';
       }
-      await axios.post('/api/crm/campaigns', {
+      await axios.post(`/api/v1/sessions/${sessionId}/crm/campaigns`, {
         ...campaignPayload,
-        filters: { statuses: form.statuses },
+        filters: {
+          statuses: form.statuses,
+          nameTerms: form.nameTerms,
+          nameMatchMode: form.nameMatchMode,
+        },
         scheduledAt: form.scheduledAt || null,
       });
       setOpen(false);
       setActiveStep(0);
+      setCaptionNotice('');
+      setCaptionImageDescription('');
       setForm((current) => ({
         ...current,
         name: '',
         message: '',
         mediaUrl: '',
         mediaPayload: '',
+        mediaBase64: '',
+        mediaSource: 'upload',
         mediaMimeType: '',
         mediaFilename: '',
         mediaSize: 0,
+        nameTerms: '',
+        nameMatchMode: 'any',
         scheduledAt: '',
       }));
       await load();
@@ -269,7 +370,7 @@ const Campaigns = () => {
 
   const action = async (id, operation) => {
     try {
-      await axios.post('/api/crm/campaigns/' + id + '/' + operation);
+      await axios.post(`/api/v1/sessions/${sessionId}/crm/campaigns/${id}/${operation}`);
       await load();
     } catch (err) {
       setError(err.response?.data?.error || 'No se pudo cambiar la campaña');
@@ -278,6 +379,8 @@ const Campaigns = () => {
 
   const openCreator = () => {
     setError('');
+    setCaptionNotice('');
+    setCaptionImageDescription('');
     setActiveStep(0);
     setOpen(true);
   };
@@ -305,6 +408,7 @@ const Campaigns = () => {
         ? rawPayload.replace('data:;base64,', `data:${mimeType};base64,`)
         : rawPayload;
       setError('');
+      setCaptionImageDescription('');
       setForm((current) => ({
         ...current,
         messageType: detectMediaType(file.type),
@@ -313,25 +417,158 @@ const Campaigns = () => {
         mediaFilename: file.name,
         mediaSize: file.size,
         mediaUrl: '',
+        mediaBase64: '',
+        mediaSource: 'upload',
       }));
     };
     reader.readAsDataURL(file);
   };
 
-  const clearMedia = () => setForm((current) => ({
-    ...current,
-    mediaPayload: '',
-    mediaMimeType: '',
-    mediaFilename: '',
-    mediaSize: 0,
-  }));
+  const clearMedia = () => {
+    setCaptionImageDescription('');
+    setForm((current) => ({
+      ...current,
+      mediaPayload: '',
+      mediaBase64: '',
+      mediaUrl: '',
+      mediaMimeType: '',
+      mediaFilename: '',
+      mediaSize: 0,
+    }));
+  };
 
   const isMediaMessage = form.messageType !== 'text';
-  const hasMedia = Boolean(form.mediaPayload || form.mediaUrl);
+  const hasMedia = Boolean(form.mediaPayload || form.mediaUrl || form.mediaBase64);
+
+  const openAiAssistant = async () => {
+    setAiOpen(true);
+    setAiError('');
+    setAiLoading(true);
+    try {
+      const response = await axios.get(`/api/v1/sessions/${sessionId}/crm/campaign-ai/settings`);
+      setAiSettings({ ...initialAiSettings, ...(response.data.settings || {}), aiApiToken: '' });
+    } catch (err) {
+      setAiError(err.response?.data?.error || 'No se pudo cargar el asistente de campañas');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const saveAiSettings = async () => {
+    setAiSaving(true);
+    setAiError('');
+    try {
+      const response = await axios.put(`/api/v1/sessions/${sessionId}/crm/campaign-ai/settings`, aiSettings);
+      setAiSettings((current) => ({ ...current, ...response.data.settings, aiApiToken: '' }));
+      return true;
+    } catch (err) {
+      setAiError(err.response?.data?.error || 'No se pudo guardar la configuración de IA');
+      return false;
+    } finally {
+      setAiSaving(false);
+    }
+  };
+
+  const generateAiDraft = async () => {
+    if (!aiRequest.objective.trim()) {
+      setAiError('Describe primero el objetivo de la campaña.');
+      return;
+    }
+    setAiGenerating(true);
+    setAiError('');
+    try {
+      const saved = await saveAiSettings();
+      if (!saved) return;
+      const response = await axios.post(`/api/v1/sessions/${sessionId}/crm/campaign-ai/generate`, {
+        ...aiRequest,
+        currentMessage: form.message,
+      });
+      setAiDraft(response.data.draft || null);
+    } catch (err) {
+      setAiError(err.response?.data?.error || 'La IA no pudo preparar la campaña');
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
+  const applyAiDraft = () => {
+    if (!aiDraft) return;
+    setForm((current) => ({
+      ...current,
+      name: aiDraft.campaignName || current.name,
+      message: aiDraft.message || current.message,
+      messageType: aiDraft.messageType || 'text',
+      statuses: aiDraft.recommendedStatuses?.length ? aiDraft.recommendedStatuses : current.statuses,
+    }));
+    setAiOpen(false);
+    setActiveStep(0);
+    setOpen(true);
+  };
+
+  const generateCaption = async () => {
+    if (!form.name.trim()) {
+      setError('Indica el nombre de la campaña antes de redactar con IA.');
+      return;
+    }
+    setCaptionGenerating(true);
+    setCaptionNotice('');
+    setCaptionImageDescription('');
+    setError('');
+    try {
+      let safeFileReference = form.mediaFilename || '';
+      if (!safeFileReference && form.mediaUrl) {
+        try {
+          safeFileReference = decodeURIComponent(new URL(form.mediaUrl).pathname.split('/').filter(Boolean).pop() || 'archivo remoto');
+        } catch {
+          safeFileReference = 'archivo remoto';
+        }
+      }
+      const format = form.messageType === 'text'
+        ? 'mensaje de texto'
+        : `${mediaTypeLabels[form.messageType] || 'archivo multimedia'}${safeFileReference ? ` llamado "${safeFileReference}"` : ''}`;
+      const statusAudience = form.statuses
+        .map((status) => statusLabels[status])
+        .filter(Boolean)
+        .join(', ');
+      const audience = [
+        statusAudience,
+        form.nameTerms.trim() ? `nombres filtrados por: ${form.nameTerms.trim()}` : '',
+      ].filter(Boolean).join('; ');
+      const visualInput = form.messageType === 'image' && hasMedia
+        ? {
+            imagePayload: form.mediaPayload || form.mediaUrl || '',
+            imageBase64: form.mediaBase64 || '',
+            imageMimeType: form.mediaMimeType || '',
+            mediaFilename: form.mediaFilename || safeFileReference,
+          }
+        : {};
+      const response = await axios.post(`/api/v1/sessions/${sessionId}/crm/campaign-ai/generate`, {
+        objective: `Redactar el ${form.messageType === 'text' ? 'mensaje' : 'caption'} final para la campaña "${form.name}" que acompañará un ${format}.`,
+        audience: audience || 'Todos los contactos del CRM de esta sesión',
+        tone: 'Cercano, atractivo y profesional, con emojis pertinentes y moderados',
+        constraints: 'Entregar un texto listo para WhatsApp, visualmente ordenado, fácil de leer y con una llamada a la acción clara. No inventar precios, descuentos, fechas, stock ni beneficios. Evitar exceso de emojis, mayúsculas, hashtags y lenguaje engañoso.',
+        currentMessage: form.message,
+        ...visualInput,
+      });
+      const generatedMessage = String(response.data.draft?.message || '').trim();
+      if (!generatedMessage) throw new Error('La IA no devolvió un mensaje utilizable');
+      setForm((current) => ({ ...current, message: generatedMessage }));
+      setCaptionImageDescription(String(response.data.draft?.imageDescription || '').trim());
+      setCaptionNotice(response.data.analyzedImage
+        ? 'La IA analizó la imagen real y redactó el caption según el tema de la campaña.'
+        : form.message.trim()
+          ? 'La IA pulió tu texto. Revísalo antes de continuar.'
+          : 'Caption generado. Puedes editarlo libremente antes de enviar.');
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'No se pudo redactar el caption con IA');
+    } finally {
+      setCaptionGenerating(false);
+    }
+  };
 
   const canContinue =
     activeStep === 0
-      ? Boolean(form.sessionId && form.name)
+      ? Boolean(form.sessionId && form.name && audiencePreview.count !== 0)
       : activeStep === 1
         ? Boolean(isMediaMessage ? hasMedia : form.message)
         : true;
@@ -339,6 +576,15 @@ const Campaigns = () => {
   const selectedSegments = form.statuses
     .map((status) => statusLabels[status])
     .filter(Boolean);
+
+  const selectedNameTerms = form.nameTerms
+    .split(/[,\n]+/)
+    .map((term) => term.trim())
+    .filter(Boolean);
+
+  const nameFilterSummary = selectedNameTerms.length
+    ? `Nombre contiene ${form.nameMatchMode === 'all' ? 'todos' : 'cualquiera'}: ${selectedNameTerms.join(', ')}`
+    : 'Sin filtro por nombre';
 
   const scheduleSummary = form.scheduledAt
     ? 'Programada para ' + formatDate(form.scheduledAt)
@@ -398,19 +644,25 @@ const Campaigns = () => {
             de envío y revisa el progreso desde un solo lugar.
           </Typography>
         </Box>
-        <Button
-          variant="contained"
-          size="large"
-          startIcon={<Add />}
-          onClick={openCreator}
-          sx={{
-            width: { xs: '100%', sm: 'auto' },
-            flexShrink: 0,
-            px: 2.5,
-          }}
-        >
-          Nueva campaña
-        </Button>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ flexShrink: 0 }}>
+          <Button
+            variant="outlined"
+            size="large"
+            startIcon={<AutoAwesome />}
+            onClick={openAiAssistant}
+          >
+            Planificar con IA
+          </Button>
+          <Button
+            variant="contained"
+            size="large"
+            startIcon={<Add />}
+            onClick={openCreator}
+            sx={{ px: 2.5 }}
+          >
+            Nueva campaña
+          </Button>
+        </Stack>
       </Stack>
 
       <Alert
@@ -623,6 +875,17 @@ const Campaigns = () => {
                       </Typography>
                     </Box>
 
+                    {Boolean(item.filters?.nameTerms?.length) && (
+                      <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
+                        <Typography variant="caption" color="text.secondary" fontWeight={800}>
+                          Nombre {item.filters.nameMatchMode === 'all' ? 'contiene todas:' : 'contiene:'}
+                        </Typography>
+                        {item.filters.nameTerms.map((term) => (
+                          <Chip key={term} size="small" variant="outlined" label={term} />
+                        ))}
+                      </Stack>
+                    )}
+
                     {item.status === 'failed' && item.lastError && (
                       <Alert
                         severity="error"
@@ -824,17 +1087,182 @@ const Campaigns = () => {
           >
             Crear primera campaña
           </Button>
-          {!sessions.length && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ display: 'block', mt: 1.5 }}
-            >
-              Necesitarás una sesión de WhatsApp disponible para continuar.
-            </Typography>
-          )}
         </Paper>
       )}
+
+      <Dialog
+        open={aiOpen}
+        onClose={() => setAiOpen(false)}
+        fullWidth
+        fullScreen={isMobile}
+        maxWidth="md"
+        scroll="paper"
+      >
+        <DialogTitle component="div" sx={{ borderBottom: '1px solid', borderColor: 'divider' }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={2}>
+            <Box>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <AutoAwesome color="primary" />
+                <Typography variant="h6" fontWeight={900}>Asistente de campañas</Typography>
+              </Stack>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                Usa el contexto empresarial de esta sesión para crear estrategia, copy y brief visual.
+              </Typography>
+            </Box>
+            <IconButton onClick={() => setAiOpen(false)} aria-label="Cerrar asistente"><Close /></IconButton>
+          </Stack>
+        </DialogTitle>
+        <DialogContent sx={{ py: 3 }}>
+          {aiLoading ? (
+            <Stack alignItems="center" sx={{ py: 8 }}><CircularProgress /></Stack>
+          ) : (
+            <Stack spacing={2.5}>
+              {aiError && <Alert severity="error" onClose={() => setAiError('')}>{aiError}</Alert>}
+
+              <Paper variant="outlined" sx={{ p: 2.5 }}>
+                <Typography variant="subtitle1" fontWeight={900}>Motor de IA de esta sesión</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Puedes reutilizar la IA configurada en los flujos o separar este asistente con sus propias credenciales.
+                </Typography>
+                <Alert severity="info" variant="outlined" sx={{ mb: 2 }}>
+                  Para analizar imágenes, el modelo elegido debe aceptar entrada visual. Si es únicamente de texto, el sistema bloqueará el análisis en lugar de inventar una descripción.
+                </Alert>
+                <ToggleButtonGroup
+                  exclusive
+                  fullWidth
+                  value={aiSettings.mode}
+                  onChange={(_event, value) => value && setAiSettings({ ...aiSettings, mode: value })}
+                  sx={{ mb: 2 }}
+                >
+                  <ToggleButton value="inherit">Heredar IA de flujos</ToggleButton>
+                  <ToggleButton value="custom">Proveedor propio</ToggleButton>
+                </ToggleButtonGroup>
+                {aiSettings.mode === 'inherit' ? (
+                  <Alert severity={aiSettings.inherited?.available ? 'success' : 'warning'}>
+                    {aiSettings.inherited?.available
+                      ? `Se usará ${aiSettings.inherited.aiProvider || 'el proveedor configurado'} · ${aiSettings.inherited.aiModel}. ${aiSettings.inherited.hasBusinessContext ? 'El contexto de empresa está disponible.' : 'Conviene completar el contexto empresarial en IA de flujos.'}`
+                      : 'La IA heredada está incompleta. Configúrala en IA de flujos o selecciona un proveedor propio.'}
+                  </Alert>
+                ) : (
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={4}>
+                      <TextField
+                        fullWidth
+                        select
+                        label="Proveedor"
+                        value={aiSettings.aiProvider}
+                        onChange={(event) => {
+                          const aiProvider = event.target.value;
+                          setAiSettings({ ...aiSettings, aiProvider, aiApiUrl: providerApiUrls[aiProvider] || '' });
+                        }}
+                      >
+                        <MenuItem value="openai">OpenAI</MenuItem>
+                        <MenuItem value="groq">Groq</MenuItem>
+                        <MenuItem value="gemini">Gemini</MenuItem>
+                        <MenuItem value="openai_compatible">Compatible con OpenAI</MenuItem>
+                      </TextField>
+                    </Grid>
+                    <Grid item xs={12} sm={8}>
+                      <TextField fullWidth label="URL de la API" value={aiSettings.aiApiUrl} onChange={(event) => setAiSettings({ ...aiSettings, aiApiUrl: event.target.value })} placeholder="https://api.proveedor.com/v1/chat/completions" />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField fullWidth label="Modelo multimodal" value={aiSettings.aiModel} onChange={(event) => setAiSettings({ ...aiSettings, aiModel: event.target.value })} placeholder="modelo con visión" />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        type="password"
+                        label={aiSettings.hasCustomToken ? 'Token (guardado; escribe para reemplazar)' : 'Token de API'}
+                        value={aiSettings.aiApiToken}
+                        onChange={(event) => setAiSettings({ ...aiSettings, aiApiToken: event.target.value })}
+                        autoComplete="new-password"
+                      />
+                    </Grid>
+                  </Grid>
+                )}
+                <Grid container spacing={2} sx={{ mt: 0 }}>
+                  <Grid item xs={12} sm={6}>
+                    <TextField fullWidth multiline minRows={3} label="Voz de marca" value={aiSettings.brandVoice} onChange={(event) => setAiSettings({ ...aiSettings, brandVoice: event.target.value })} placeholder="Ej. Cercana, directa, sin exageraciones..." />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField fullWidth multiline minRows={3} label="Reglas para campañas" value={aiSettings.campaignInstructions} onChange={(event) => setAiSettings({ ...aiSettings, campaignInstructions: event.target.value })} placeholder="Condiciones, palabras prohibidas, CTA preferido..." />
+                  </Grid>
+                </Grid>
+                <Button sx={{ mt: 2 }} variant="outlined" disabled={aiSaving} onClick={saveAiSettings}>
+                  {aiSaving ? 'Guardando…' : 'Guardar configuración'}
+                </Button>
+              </Paper>
+
+              <Paper variant="outlined" sx={{ p: 2.5 }}>
+                <Typography variant="subtitle1" fontWeight={900}>¿Qué quieres lograr?</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  La IA no inventará precios, fechas ni stock: lo no confirmado quedará marcado como supuesto.
+                </Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12}>
+                    <TextField required fullWidth multiline minRows={2} label="Objetivo" value={aiRequest.objective} onChange={(event) => setAiRequest({ ...aiRequest, objective: event.target.value })} placeholder="Ej. Recuperar clientes interesados con un descuento de fin de mes" />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField fullWidth multiline minRows={2} label="Oferta o información confirmada" value={aiRequest.offer} onChange={(event) => setAiRequest({ ...aiRequest, offer: event.target.value })} placeholder="Precio, descuento, vigencia, condiciones..." />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField fullWidth multiline minRows={2} label="Público objetivo" value={aiRequest.audience} onChange={(event) => setAiRequest({ ...aiRequest, audience: event.target.value })} placeholder="Quiénes son y qué necesitan" />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField fullWidth label="Tono" value={aiRequest.tone} onChange={(event) => setAiRequest({ ...aiRequest, tone: event.target.value })} />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField fullWidth label="Restricciones" value={aiRequest.constraints} onChange={(event) => setAiRequest({ ...aiRequest, constraints: event.target.value })} placeholder="Qué evitar o respetar" />
+                  </Grid>
+                </Grid>
+                <Button variant="contained" startIcon={aiGenerating ? <CircularProgress size={16} color="inherit" /> : <AutoAwesome />} disabled={aiGenerating || aiSaving} onClick={generateAiDraft} sx={{ mt: 2 }}>
+                  {aiGenerating ? 'Preparando campaña…' : 'Crear propuesta'}
+                </Button>
+              </Paper>
+
+              {aiDraft && (
+                <Paper variant="outlined" sx={{ p: 2.5, borderColor: 'primary.main' }}>
+                  <Typography variant="overline" color="primary.main" fontWeight={900}>Propuesta editable</Typography>
+                  <Typography variant="h6" fontWeight={900}>{aiDraft.campaignName}</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>{aiDraft.strategySummary}</Typography>
+                  <TextField
+                    fullWidth
+                    multiline
+                    minRows={4}
+                    label="Copy para WhatsApp"
+                    value={aiDraft.message || ''}
+                    onChange={(event) => setAiDraft({ ...aiDraft, message: event.target.value })}
+                    sx={{ mt: 2 }}
+                    helperText="Puedes editarlo aquí; {{name}} y {{phone}} se personalizan al enviar."
+                  />
+                  <Grid container spacing={2} sx={{ mt: 0 }}>
+                    <Grid item xs={12} sm={6}>
+                      <TextField fullWidth multiline minRows={4} label="Brief visual" value={aiDraft.visualBrief || ''} onChange={(event) => setAiDraft({ ...aiDraft, visualBrief: event.target.value })} />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField fullWidth multiline minRows={4} label="Prompt para generar imagen" value={aiDraft.imagePrompt || ''} onChange={(event) => setAiDraft({ ...aiDraft, imagePrompt: event.target.value })} />
+                    </Grid>
+                  </Grid>
+                  {Boolean(aiDraft.checklist?.length) && (
+                    <Alert severity="info" sx={{ mt: 2 }}>
+                      <strong>Antes de enviar:</strong> {aiDraft.checklist.join(' · ')}
+                    </Alert>
+                  )}
+                  {Boolean(aiDraft.assumptions?.length) && (
+                    <Alert severity="warning" sx={{ mt: 1 }}>
+                      <strong>Datos por confirmar:</strong> {aiDraft.assumptions.join(' · ')}
+                    </Alert>
+                  )}
+                  <Button variant="contained" onClick={applyAiDraft} sx={{ mt: 2 }}>Usar esta propuesta</Button>
+                </Paper>
+              )}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ borderTop: '1px solid', borderColor: 'divider' }}>
+          <Button onClick={() => setAiOpen(false)}>Cerrar</Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog
         open={open}
@@ -941,39 +1369,15 @@ const Campaigns = () => {
                 La audiencia usa directamente los contactos del CRM de esta sesi&oacute;n. Los contactos importados aparecen como Clientes y no necesitas importarlos otra vez. Al guardar la campa&ntilde;a se congela su lista de destinatarios, para que futuros cambios del CRM no alteren un env&iacute;o ya revisado.
               </Alert>
 
-              {!sessions.length && (
-                <Alert severity="info">
-                  No hay sesiones de WhatsApp disponibles. Conecta una sesión
-                  antes de crear la campaña.
-                </Alert>
-              )}
-
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6}>
                   <TextField
                     fullWidth
-                    select
                     label="Sesión de envío"
                     value={form.sessionId}
-                    onChange={(event) =>
-                      setForm({ ...form, sessionId: event.target.value })
-                    }
-                    helperText="La cuenta de WhatsApp que realizará el envío."
-                  >
-                    {!sessions.length && (
-                      <MenuItem value="" disabled>
-                        No hay sesiones disponibles
-                      </MenuItem>
-                    )}
-                    {sessions.map((item) => (
-                      <MenuItem
-                        key={item.sessionId}
-                        value={item.sessionId}
-                      >
-                        {item.sessionId}
-                      </MenuItem>
-                    ))}
-                  </TextField>
+                    helperText="La campaña y su audiencia pertenecen exclusivamente a esta sesión."
+                    InputProps={{ readOnly: true }}
+                  />
                 </Grid>
                 <Grid item xs={12} sm={6}>
                   <TextField
@@ -1036,7 +1440,38 @@ const Campaigns = () => {
                     ))}
                   </TextField>
                 </Grid>
+                <Grid item xs={12} md={8}>
+                  <TextField
+                    fullWidth
+                    label="Filtrar por palabras en el nombre"
+                    value={form.nameTerms}
+                    onChange={(event) => setForm({ ...form, nameTerms: event.target.value })}
+                    placeholder="restaurante, mercado, minimarket"
+                    helperText="Separa varios términos con comas. La búsqueda no distingue mayúsculas en la configuración habitual de la base de datos."
+                    inputProps={{ maxLength: 980 }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Cómo combinar palabras"
+                    value={form.nameMatchMode}
+                    onChange={(event) => setForm({ ...form, nameMatchMode: event.target.value })}
+                    helperText="Cualquiera amplía; todas restringe."
+                  >
+                    <MenuItem value="any">Contiene cualquiera</MenuItem>
+                    <MenuItem value="all">Contiene todas</MenuItem>
+                  </TextField>
+                </Grid>
               </Grid>
+
+              {audiencePreview.error && <Alert severity="error">{audiencePreview.error}</Alert>}
+              {!audiencePreviewLoading && audiencePreview.count === 0 && (
+                <Alert severity="warning">
+                  Ningún contacto coincide con estos filtros. Ajusta las clasificaciones o las palabras del nombre.
+                </Alert>
+              )}
 
               <Paper
                 variant="outlined"
@@ -1061,19 +1496,24 @@ const Campaigns = () => {
                         ? selectedSegments.join(', ')
                         : 'Todos los contactos del CRM'}
                     </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {nameFilterSummary}
+                    </Typography>
+                    {Boolean(audiencePreview.samples.length) && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+                        Ejemplos: {audiencePreview.samples.map((contact) => contact.name).join(' · ')}
+                      </Typography>
+                    )}
                   </Box>
                   <Chip
                     icon={<TuneOutlined />}
                     color="primary"
                     variant="outlined"
-                    label={
-                      selectedSegments.length
-                        ? selectedSegments.length +
-                          (selectedSegments.length === 1
-                            ? ' segmento'
-                            : ' segmentos')
-                        : 'Sin filtros'
-                    }
+                    label={audiencePreviewLoading
+                      ? 'Calculando…'
+                      : audiencePreview.count === null
+                        ? 'Sin estimación'
+                        : `${audiencePreview.count} ${audiencePreview.count === 1 ? 'contacto' : 'contactos'}`}
                   />
                 </Stack>
               </Paper>
@@ -1125,6 +1565,46 @@ const Campaigns = () => {
               </Box>
 
               {isMediaMessage && (
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      fullWidth
+                      select
+                      label="Tipo de archivo"
+                      value={form.messageType}
+                      onChange={(event) => setForm({ ...form, messageType: event.target.value })}
+                    >
+                      {Object.entries(mediaTypeLabels).map(([value, label]) => (
+                        <MenuItem key={value} value={value}>{label}</MenuItem>
+                      ))}
+                    </TextField>
+                  </Grid>
+                  <Grid item xs={12} sm={8}>
+                    <ToggleButtonGroup
+                      exclusive
+                      fullWidth
+                      value={form.mediaSource}
+                      onChange={(_event, value) => {
+                        if (!value) return;
+                        setForm({
+                          ...form,
+                          mediaSource: value,
+                          mediaPayload: '',
+                          mediaUrl: '',
+                          mediaBase64: '',
+                          mediaSize: 0,
+                        });
+                      }}
+                    >
+                      <ToggleButton value="upload">Subir archivo</ToggleButton>
+                      <ToggleButton value="url">URL</ToggleButton>
+                      <ToggleButton value="base64">Base64</ToggleButton>
+                    </ToggleButtonGroup>
+                  </Grid>
+                </Grid>
+              )}
+
+              {isMediaMessage && form.mediaSource === 'upload' && (
                 <Paper
                   variant="outlined"
                   sx={{ p: 2, borderStyle: 'dashed', borderColor: hasMedia ? 'primary.main' : 'divider', bgcolor: 'action.hover' }}
@@ -1164,7 +1644,7 @@ const Campaigns = () => {
                 </Paper>
               )}
 
-              {isMediaMessage && !form.mediaPayload && (
+              {isMediaMessage && form.mediaSource === 'url' && (
                 <TextField
                   fullWidth
                   type="url"
@@ -1176,17 +1656,99 @@ const Campaigns = () => {
                 />
               )}
 
-              <TextField
-                fullWidth
-                multiline
-                minRows={5}
-                label="Mensaje"
-                value={form.message}
-                onChange={(event) =>
-                  setForm({ ...form, message: event.target.value })
-                }
-                helperText="Puedes usar {{name}} y {{phone}} para personalizar cada mensaje."
-              />
+              {isMediaMessage && form.mediaSource === 'base64' && (
+                <Grid container spacing={2}>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      multiline
+                      minRows={4}
+                      label="Contenido Base64"
+                      value={form.mediaBase64}
+                      onChange={(event) => setForm({ ...form, mediaBase64: event.target.value.trim() })}
+                      placeholder="iVBORw0KGgo... o data:image/png;base64,iVBORw0KGgo..."
+                      helperText="Acepta Base64 puro o data URI. Máximo 10 MB una vez decodificado."
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Tipo MIME"
+                      value={form.mediaMimeType}
+                      onChange={(event) => setForm({ ...form, mediaMimeType: event.target.value })}
+                      placeholder="image/png, video/mp4, audio/mpeg..."
+                      helperText="Es obligatorio cuando pegas Base64 puro."
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Nombre del archivo"
+                      value={form.mediaFilename}
+                      onChange={(event) => setForm({ ...form, mediaFilename: event.target.value })}
+                      placeholder="oferta.png"
+                    />
+                  </Grid>
+                </Grid>
+              )}
+
+              <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.paper' }}>
+                <Stack
+                  direction={{ xs: 'column', sm: 'row' }}
+                  justifyContent="space-between"
+                  alignItems={{ xs: 'stretch', sm: 'center' }}
+                  spacing={1.5}
+                  sx={{ mb: 2 }}
+                >
+                  <Box>
+                    <Typography variant="subtitle2" fontWeight={900}>
+                      {isMediaMessage ? 'Caption del archivo' : 'Contenido del mensaje'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {form.messageType === 'image' && hasMedia
+                        ? 'La IA multimodal verá la imagen real y la relacionará con el tema de la campaña.'
+                        : 'Escribe una idea y la IA la pulirá, o déjalo vacío para que redacte desde cero.'}
+                    </Typography>
+                  </Box>
+                  <Button
+                    variant="contained"
+                    startIcon={captionGenerating ? <CircularProgress size={16} color="inherit" /> : <AutoAwesome />}
+                    disabled={captionGenerating || !form.name}
+                    onClick={generateCaption}
+                    sx={{ flexShrink: 0 }}
+                  >
+                    {captionGenerating
+                      ? 'Redactando…'
+                      : form.messageType === 'image' && hasMedia
+                        ? 'Analizar imagen y redactar'
+                        : form.message.trim()
+                        ? 'Mejorar con IA'
+                        : 'Redactar con IA'}
+                  </Button>
+                </Stack>
+                <TextField
+                  fullWidth
+                  multiline
+                  minRows={5}
+                  label={isMediaMessage ? 'Caption' : 'Mensaje'}
+                  value={form.message}
+                  onChange={(event) => {
+                    setCaptionNotice('');
+                    setForm({ ...form, message: event.target.value });
+                  }}
+                  helperText="La IA usa el contexto empresarial de esta sesión. Puedes usar {{name}} y {{phone}} para personalizar."
+                />
+                {captionNotice && (
+                  <Alert severity="success" sx={{ mt: 1.5 }} onClose={() => setCaptionNotice('')}>
+                    {captionNotice}
+                  </Alert>
+                )}
+                {captionImageDescription && (
+                  <Alert severity="info" sx={{ mt: 1.5 }}>
+                    <strong>Descripción detectada:</strong> {captionImageDescription}
+                  </Alert>
+                )}
+              </Paper>
 
               <Stack
                 direction={{ xs: 'column', sm: 'row' }}
@@ -1323,7 +1885,10 @@ const Campaigns = () => {
                         '\n' +
                         (selectedSegments.length
                           ? selectedSegments.join(', ')
-                          : 'Todos los contactos del CRM')}
+                          : 'Todos los contactos del CRM') +
+                        '\n' +
+                        nameFilterSummary +
+                        (audiencePreview.count === null ? '' : `\nDestinatarios: ${audiencePreview.count}`)}
                     </ReviewBlock>
                   </Grid>
                   <Grid item xs={12} md={4}>
@@ -1398,7 +1963,7 @@ const Campaigns = () => {
               <Button
                 variant="contained"
                 startIcon={creating ? <CircularProgress size={16} color="inherit" /> : <SendOutlined />}
-                disabled={creating || !form.sessionId || !form.name || (isMediaMessage ? !hasMedia : !form.message)}
+                disabled={creating || !form.sessionId || !form.name || audiencePreview.count === 0 || (isMediaMessage ? !hasMedia : !form.message)}
                 onClick={create}
               >
                 {creating ? 'Creando…' : 'Crear campaña'}

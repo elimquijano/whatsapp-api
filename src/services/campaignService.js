@@ -6,6 +6,7 @@ import AiMessage from "../models/AiMessage.js";
 import sessionManager from "../manager/SessionManager.js";
 import { prepareMediaPayload, sendOutboundMessage } from "./messageService.js";
 import { loadCampaignMedia } from "./campaignMediaStorage.js";
+import { isInternalLidJid, phoneJidFromNumber } from "../utils/whatsappIdentity.js";
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const personalize = (text, contact, phone) => String(text || "").replace(/\{\{\s*(name|phone)\s*\}\}/g, (_, field) => field === "name" ? (contact?.name || "cliente") : phone);
@@ -56,8 +57,12 @@ class CampaignService {
       for (const recipient of campaign.recipients.filter((item) => item.status === "queued")) {
         if ((await CrmCampaign.findByPk(campaign.id, { attributes: ["status"] }))?.status === "paused") break;
         const content = personalize(campaign.message, recipient.contact, recipient.phone);
-        const jid = recipient.contact?.contactJid || `${recipient.phone}@s.whatsapp.net`;
         try {
+          if (isInternalLidJid(recipient.contact?.contactJid)) {
+            throw new Error("El contacto solo tiene un identificador LID; WhatsApp aún no entregó su número real");
+          }
+          const jid = phoneJidFromNumber(recipient.phone);
+          if (!jid) throw new Error("El contacto no tiene un número de WhatsApp válido");
           const result = await sendOutboundMessage({
             sock: session.sock,
             recipient: jid,

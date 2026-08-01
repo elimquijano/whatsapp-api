@@ -1,11 +1,11 @@
 import { parseSafeHttpUrl, safeFetchBuffer } from "../utils/safeHttp.js";
+import { phoneJidFromNumber, phoneNumberFromJid } from "../utils/whatsappIdentity.js";
 
 export const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
 export const MEDIA_DOWNLOAD_TIMEOUT_MS = 20000;
 
 const SUPPORTED_MEDIA_TYPES = new Set(["image", "video", "audio", "document"]);
 const DATA_URI_PATTERN = /^data:([^;,]+);base64,([a-zA-Z0-9+/=\r\n]+)$/;
-const DIRECT_JID_PATTERN = /^\d+(?::\d+)?@(s\.whatsapp\.net|lid)$/;
 const validationError = (message) => Object.assign(new Error(message), { statusCode: 400 });
 const MIME_PATTERN = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i;
 
@@ -18,15 +18,31 @@ const normalizeMimeType = (value) => {
   return mimeType;
 };
 
+export const resolveMediaInput = ({ payload, base64, mimetype } = {}) => {
+  const regularPayload = String(payload || "").trim();
+  if (regularPayload) return regularPayload;
+
+  const rawBase64 = String(base64 || "").trim();
+  if (!rawBase64) return "";
+  if (rawBase64.startsWith("data:")) return rawBase64;
+
+  const mimeType = normalizeMimeType(mimetype);
+  if (!mimeType) {
+    throw validationError("Cuando envías Base64 puro debes indicar mimetype, por ejemplo image/png o audio/mpeg");
+  }
+  return `data:${mimeType};base64,${rawBase64.replace(/\s/g, "")}`;
+};
+
 export const normalizeRecipientJid = (recipient) => {
   const value = String(recipient || "").trim();
   if (value.includes("@")) {
-    if (!DIRECT_JID_PATTERN.test(value)) throw validationError("El destinatario no es un chat individual válido");
-    return value;
+    const phone = phoneNumberFromJid(value);
+    if (!phone) throw validationError("El destinatario debe ser un número real de WhatsApp; los identificadores LID no son teléfonos");
+    return `${phone}@s.whatsapp.net`;
   }
-  const phone = value.replace(/\D/g, "");
-  if (phone.length < 6 || phone.length > 20) throw validationError("El destinatario no es válido");
-  return `${phone}@s.whatsapp.net`;
+  const jid = phoneJidFromNumber(value);
+  if (!jid) throw validationError("El destinatario no es válido");
+  return jid;
 };
 
 export const inspectMediaPayload = (payload, declaredMimeType = "") => {

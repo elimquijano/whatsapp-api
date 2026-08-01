@@ -14,6 +14,8 @@ import QRCode from "qrcode";
 import User from "../models/User.js";
 import WhatsAppSession from "../models/WhatsAppSession.js";
 import aiCrmService from "../services/aiCrmService.js";
+import { normalizePhoneNumber, resolveWhatsAppIdentity } from "../utils/whatsappIdentity.js";
+import { repairStoredLidContacts } from "../services/crmIdentityService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -200,6 +202,19 @@ class SessionManager {
             sessionData.qrDataUrl = null;
             sessionData.reconnectAttempt = 0;
             sessionData.lastDisconnect = null;
+            const connectedJid = String(sock.user?.id || "");
+            const sessionIdentity = {};
+            const connectedPhone = normalizePhoneNumber(connectedJid);
+            if (connectedPhone) sessionIdentity.phoneNumber = connectedPhone;
+            if (sock.user?.name) sessionIdentity.displayName = sock.user.name;
+            if (Object.keys(sessionIdentity).length) {
+              await WhatsAppSession.update(sessionIdentity, { where: { userId, sessionId } });
+            }
+            const openedSessionRecord = await WhatsAppSession.findOne({ where: { userId, sessionId } });
+            const repair = await repairStoredLidContacts({ sock, sessionRecord: openedSessionRecord });
+            if (repair.repaired || repair.unresolved) {
+              this.logger.info({ userId, sessionId, ...repair }, "Reconciliacion de contactos LID completada");
+            }
             this.logger.info(`✅ Conectado: Usuario ${userId}, Sesión ${sessionId}`);
           }
         } catch (error) {
@@ -215,7 +230,7 @@ class SessionManager {
           
           const user = await User.findByPk(userId);
           const sessionRecord = await WhatsAppSession.findOne({ where: { userId, sessionId } });
-          const webhookUrl = sessionRecord?.webhookUrl || user?.sessionWebhooks?.[sessionId] || user?.webhookUrl;
+          const webhookUrl = sessionRecord?.webhookUrl || user?.sessionWebhooks?.[sessionId];
           if (!user) return;
 
           // Verificar expiración del plan
@@ -232,37 +247,22 @@ class SessionManager {
             const extractedMessage = aiCrmService.extractMessage(msg);
             if (!extractedMessage || !extractedMessage.content) continue;
 
-            const remoteJid = msg.key.remoteJid;
-            const participant = msg.key.participant;
-            let senderJid = participant || remoteJid;
-
-            // LOG SEGURO
-            this.logger.info(`📩 Mensaje de ${msg.pushName || 'Desconocido'} (${remoteJid})`);
-
-            // RESOLUCIÓN DE LID A NÚMERO REAL
-            if (senderJid.endsWith('@lid')) {
-              // TRUCO: Buscar cualquier JID real escondido en el objeto del mensaje
-              const msgString = JSON.stringify(msg);
-              const realJidMatch = msgString.match(/(\d+)@s\.whatsapp\.net/);
-              
-              if (realJidMatch) {
-                senderJid = realJidMatch[0];
-                this.logger.info(`🎯 ¡Número real encontrado en metadatos!: ${senderJid}`);
-              } else {
-                // Si no hay match, intentar buscar en la caché (lo que ya teníamos)
-                const contact = sock.contacts ? sock.contacts[senderJid] : null;
-                if (contact && contact.id && contact.id.endsWith('@s.whatsapp.net')) {
-                  senderJid = contact.id;
-                }
-              }
-            } else if (msg.key.fromMe) {
-              senderJid = sock.user.id;
+            const identity = await resolveWhatsAppIdentity({ sock, msg });
+            if (!identity.resolved) {
+              this.logger.warn({
+                userId,
+                sessionId,
+                messageId: msg.key.id,
+                hasLid: Boolean(identity.lidJid),
+              }, "Mensaje omitido del CRM porque WhatsApp no entrego un numero PN verificable");
+            } else {
+              this.logger.info({
+                userId,
+                sessionId,
+                senderNumber: identity.phone,
+                pushName: msg.pushName || null,
+              }, "Numero real de WhatsApp resuelto");
             }
-
-            // Limpiar el ID para obtener solo el número
-            const senderNumber = senderJid.split('@')[0].split(':')[0];
-
-            this.logger.info(`✅ Remitente final: ${senderNumber} (Nombre: ${msg.pushName || '?'})`);
 
             // Prepare payload
             const payload = {
@@ -270,9 +270,9 @@ class SessionManager {
               instanceId: sessionId,
               data: {
                 id: msg.key.id,
-                from: remoteJid,
-                senderJid: senderJid,
-                senderNumber: senderNumber,
+                from: identity.phoneJid,
+                senderJid: identity.phoneJid,
+                senderNumber: identity.phone,
                 pushName: msg.pushName,
                 message: msg.message,
                 timestamp: msg.messageTimestamp,
@@ -282,9 +282,14 @@ class SessionManager {
 
             // IA CRM directa: guarda todos los mensajes en BD y responde solo si
             // el switch automático de esta sesión está activado.
-            await aiCrmService
-              .handleMessage({ userId, sessionId, sock, msg, senderNumber })
-              .catch(err => this.logger.error(`IA CRM error for session ${sessionId}: ${err.message}`));
+            if (identity.resolved) {
+              await aiCrmService
+                .handleMessage({ userId, sessionId, sock, msg, identity })
+                .catch((err) => {
+                  const log = err.code === "AI_MODEL_INVALID_JSON" ? this.logger.warn.bind(this.logger) : this.logger.error.bind(this.logger);
+                  log({ userId, sessionId, code: err.code || "AI_CRM_ERROR", error: err.message }, "Fallo procesando IA CRM");
+                });
+            }
 
             // El webhook comercial anterior sigue disponible e independiente.
             if (webhookUrl) {

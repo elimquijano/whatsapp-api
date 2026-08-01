@@ -580,7 +580,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
     setLoading(true);
     setMessage(null);
     try {
-      const response = await axios.get(`/api/ai/sessions/${sessionId}/config`);
+      const response = await axios.get(`/api/v1/sessions/${sessionId}/ai/config`);
       const savedConfig = response.data.config;
       const starter = newStarterConfig();
       const meaningfulSavedValues = Object.fromEntries(Object.entries(savedConfig || {}).filter(([, value]) => value !== null && value !== ''));
@@ -625,7 +625,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
       return null;
     }
     try {
-      const response = await axios.get(`/api/ai/sessions/${sessionId}/workflow-executions/${executionId}`);
+      const response = await axios.get(`/api/v1/sessions/${sessionId}/ai/workflow-executions/${executionId}`);
       if (response.data.workflowEngineVersion) setConfig((current) => ({ ...current, workflowEngineVersion: Number(response.data.workflowEngineVersion) }));
       const execution = { ...response.data.execution, pollAfterMs: response.data.pollAfterMs };
       showExecution(execution);
@@ -639,7 +639,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
   const loadExecutions = async ({ selectLatest = false, autoFollow = false, taskKey = tab === 1 ? permission?.key : '', scope = tab === 2 ? 'main' : 'task' } = {}) => {
     if (!sessionId || (tab === 1 && !taskKey)) return;
     try {
-      const response = await axios.get(`/api/ai/sessions/${sessionId}/workflow-executions`, { params: { limit: 20, ...(taskKey ? { taskKey } : {}), ...(scope ? { scope } : {}) } });
+      const response = await axios.get(`/api/v1/sessions/${sessionId}/ai/workflow-executions`, { params: { limit: 20, ...(taskKey ? { taskKey } : {}), ...(scope ? { scope } : {}) } });
       if (response.data.workflowEngineVersion) setConfig((current) => ({ ...current, workflowEngineVersion: Number(response.data.workflowEngineVersion) }));
       const received = response.data.executions || [];
       const recent = scope
@@ -921,7 +921,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
   const save = async () => {
     setLoading(true); setMessage(null);
     try {
-      const response = await axios.put(`/api/ai/sessions/${sessionId}/config`, { config });
+      const response = await axios.put(`/api/v1/sessions/${sessionId}/ai/config`, { config });
       const permissions = (response.data.config?.permissions || []).map(normalizePermission);
       setConfig({
         ...newStarterConfig(),
@@ -942,7 +942,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
     setTesting(true);
     setMessage(null);
     try {
-      const savedResponse = await axios.put(`/api/ai/sessions/${sessionId}/config`, { config });
+      const savedResponse = await axios.put(`/api/v1/sessions/${sessionId}/ai/config`, { config });
       const savedPermissions = (savedResponse.data.config?.permissions || []).map(normalizePermission);
       setConfig({
         ...newStarterConfig(),
@@ -955,7 +955,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
       onAutomationChange?.(Boolean(savedResponse.data.config?.autoReplyEnabled));
       const savedTaskKey = savedResponse.data.config?.permissions?.[permissionIndex]?.key || permission.key;
       const response = await axios.post(
-        `/api/ai/sessions/${sessionId}/workflows/tasks/${encodeURIComponent(savedTaskKey)}/test`,
+        `/api/v1/sessions/${sessionId}/ai/workflows/tasks/${encodeURIComponent(savedTaskKey)}/test`,
         testPayload,
       );
       const executionId = response.data.executionId || response.data.result?.executionId;
@@ -1016,7 +1016,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
   const applyPreset = async () => {
     setLoading(true); setMessage(null);
     try {
-      const response = await axios.post(`/api/ai/sessions/${sessionId}/presets/sales`);
+      const response = await axios.post(`/api/v1/sessions/${sessionId}/ai/presets/sales`);
       const permissions = (response.data.config?.permissions || []).map(normalizePermission);
       setConfig({
         ...newStarterConfig(),

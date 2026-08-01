@@ -15,7 +15,7 @@ const AiCrmConfigPage = () => {
         variant="page"
         open
         sessionId={sessionId}
-        onClose={() => navigate('/dashboard')}
+        onClose={() => navigate(`/dashboard/sessions/${encodeURIComponent(sessionId)}/crm`)}
       />
     </Box>
   );

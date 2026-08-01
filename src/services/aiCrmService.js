@@ -16,11 +16,14 @@ import { parseSafeHttpUrl, safeFetchBuffer } from "../utils/safeHttp.js";
 import { getEnabledGlobalTaskKeys, GLOBAL_WORKFLOW_MESSAGE_TYPES } from "../utils/globalWorkflow.js";
 import { compileMainWorkflow, MAIN_MESSAGE_TYPES, serializeMainWorkflow } from "../utils/mainWorkflow.js";
 import { mainWorkflowInclude, migrateLegacyWorkflowDefinition } from "./mainWorkflowRepository.js";
+import { findOrCreateResolvedContact } from "./crmIdentityService.js";
 
 const KIB = 1024;
 const MIB = 1024 * KIB;
 const MAX_AI_RESPONSE_BYTES = 2 * MIB;
 const MAX_AI_REQUEST_BYTES = 2 * MIB;
+const MAX_AI_VISION_REQUEST_BYTES = 15 * MIB;
+const GROQ_VISION_FALLBACK_MODEL = "qwen/qwen3.6-27b";
 const MAX_NODE_RESPONSE_BYTES = 5 * MIB;
 const MAX_NODE_REQUEST_BYTES = 2 * MIB;
 const AI_PROVIDER_HOSTS = {
@@ -270,7 +273,11 @@ const parseUpstreamJson = (response) => {
 const requestAiJson = async (config, urlInput, requestBody, headers = {}) => {
   const providerTarget = validateAiProviderUrl(config.aiProvider, urlInput);
   const body = JSON.stringify(requestBody);
-  if (Buffer.byteLength(body) > MAX_AI_REQUEST_BYTES) {
+  const maxRequestBytes = Math.min(
+    MAX_AI_VISION_REQUEST_BYTES,
+    Math.max(MAX_AI_REQUEST_BYTES, Number(config._maxRequestBytes || MAX_AI_REQUEST_BYTES)),
+  );
+  if (Buffer.byteLength(body) > maxRequestBytes) {
     const error = new Error("La solicitud al proveedor de IA supera el límite permitido");
     error.code = "AI_PROVIDER_REQUEST_TOO_LARGE";
     throw error;
@@ -385,18 +392,51 @@ const isShortAnswerToAssistant = (history = []) => {
   return Boolean(previousAssistant?.content && /[?¿:]\s*$/.test(previousAssistant.content.trim()));
 };
 
-const parseModelJson = (content) => {
+export const parseModelJson = (content) => {
+  if (content && typeof content === "object" && !Array.isArray(content)) return content;
   const cleaned = String(content || "")
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
     .trim()
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/, "");
-  try { return JSON.parse(cleaned); } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
-    throw new Error("La IA no devolvió un JSON válido");
+  const candidates = [cleaned, cleaned.replace(/,(\s*[}\]])/g, "$1")];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (typeof parsed === "string" && parsed !== candidate) return parseModelJson(parsed);
+      if (Array.isArray(parsed) && parsed.length === 1 && parsed[0] && typeof parsed[0] === "object") return parsed[0];
+      if (Array.isArray(parsed)) throw new Error("Se esperaba un objeto JSON");
+      return parsed;
+    } catch { /* buscar objetos delimitados debajo */ }
   }
+
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < cleaned.length; index += 1) {
+    const char = cleaned[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+    } else if (char === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        const fragment = cleaned.slice(start, index + 1).replace(/,(\s*[}\]])/g, "$1");
+        try { return JSON.parse(fragment); } catch { start = -1; }
+      }
+    }
+  }
+  const error = new Error("La IA no devolvio un JSON valido despues del reintento");
+  error.code = "AI_MODEL_INVALID_JSON";
+  throw error;
 };
 
 const traceSafely = async (operation, fallback = null) => {
@@ -491,7 +531,7 @@ class AiCrmService {
   }
 
   async handleMessage(input) {
-    const contactKey = `${input.userId}:${input.sessionId}:${input.msg.key.remoteJid}`;
+    const contactKey = `${input.userId}:${input.sessionId}:${input.identity?.phone || input.msg.key.remoteJid}`;
     const previous = this.queues.get(contactKey) || Promise.resolve();
     const current = previous.catch(() => {}).then(() => this.processMessage(input));
     this.queues.set(contactKey, current);
@@ -551,9 +591,11 @@ class AiCrmService {
     return Number.isNaN(date.getTime()) ? new Date() : date;
   }
 
-  async processMessage({ userId, sessionId, sock, msg, senderNumber }) {
-    const remoteJid = msg.key.remoteJid || "";
-    if (!msg.message || remoteJid.endsWith("@g.us") || remoteJid === "status@broadcast") return;
+  async processMessage({ userId, sessionId, sock, msg, identity }) {
+    const sourceJid = msg.key.remoteJid || "";
+    if (!msg.message || sourceJid.endsWith("@g.us") || sourceJid === "status@broadcast") return;
+    if (!identity?.resolved || !identity.phone || !identity.phoneJid) return;
+    const remoteJid = identity.phoneJid;
 
     const sessionRecord = await WhatsAppSession.findOne({
       where: { userId, sessionId },
@@ -575,15 +617,15 @@ class AiCrmService {
     const extracted = this.extractMessage(msg);
     if (!extracted || !extracted.content) return;
     const fromMe = msg.key.fromMe === true;
-    const contactNumber = fromMe
-      ? remoteJid.split("@")[0].split(":")[0]
-      : String(senderNumber || remoteJid.split("@")[0]).replace(/\D/g, "");
-    const [contact] = await CrmContact.findOrCreate({
-      where: { whatsappSessionId: sessionRecord.id, phone: contactNumber },
-      defaults: { contactJid: remoteJid, name: msg.pushName || null, source: "whatsapp", status: "new", lastMessageAt: this.messageDate(msg.messageTimestamp) },
+    const contactNumber = identity.phone;
+    const contact = await findOrCreateResolvedContact({
+      sessionRecord,
+      identity,
+      pushName: msg.pushName || null,
+      messageDate: this.messageDate(msg.messageTimestamp),
     });
+    if (!contact) return;
     if (!fromMe && msg.pushName && !contact.name) contact.name = msg.pushName;
-    if (!contact.contactJid || !fromMe) contact.contactJid = remoteJid;
     const saved = await this.saveMessage(sessionRecord, contact, msg, remoteJid, contactNumber, extracted, fromMe ? "outgoing" : "incoming", fromMe ? "assistant" : "user", { automatic: false });
     if (saved.created) {
       contact.lastMessageAt = this.messageDate(msg.messageTimestamp);
@@ -1219,6 +1261,8 @@ class AiCrmService {
   async callModel(config, system, messages) {
     const compactSystem = boundedText(system, config._systemCharBudget || 7000);
     const compactMessages = compactModelMessages(messages, config._historyCharBudget || 3000, config._historyMessageCharBudget || 900);
+    const configuredProvider = String(config.aiProvider || "").trim().toLowerCase();
+    const configuredModel = String(config.aiModel || "").trim().toLowerCase();
     const maxOutputTokens = Math.max(128, Math.min(1200, Number(config._maxOutputTokens || 500)));
     if (config.aiProvider === "gemini") {
       const geminiUrl = parseSafeHttpUrl(renderString(config.aiApiUrl, { model: config.aiModel }));
@@ -1247,6 +1291,15 @@ class AiCrmService {
             : compactSystem,
         }, ...compactMessages],
       };
+      const provider = configuredProvider;
+      const model = configuredModel;
+      if (provider === "groq" && /^qwen\/qwen3(?:\.|-|$)/.test(model)) {
+        // Qwen 3.x en Groq consume el presupuesto de salida con razonamiento
+        // antes del JSON final. Para las etapas estructuradas del CRM se usa
+        // el modo no-thinking documentado por el proveedor.
+        requestBody.reasoning_effort = "none";
+        requestBody.reasoning_format = "hidden";
+      }
       if (jsonMode) requestBody.response_format = { type: "json_object" };
       return requestAiJson(config, config.aiApiUrl, requestBody, {
         "Content-Type": "application/json",
@@ -1255,6 +1308,7 @@ class AiCrmService {
     };
 
     let completion = await requestCompletion({ jsonMode: true });
+    let retried = false;
     if (!completion.response.ok) {
       const failedGeneration = completion.body?.error?.failed_generation ?? completion.body?.failed_generation;
       if (failedGeneration) {
@@ -1268,7 +1322,10 @@ class AiCrmService {
       const errorDetails = `${completion.body?.error?.message || ""} ${completion.body?.error?.code || ""}`;
       const isJsonValidationFailure = completion.response.status === 400
         && /json|failed_generation|response_format|validate/i.test(errorDetails);
-      if (isJsonValidationFailure) completion = await requestCompletion({ jsonMode: false, retry: true });
+      if (isJsonValidationFailure) {
+        completion = await requestCompletion({ jsonMode: false, retry: true });
+        retried = true;
+      }
     }
 
     const { response, body } = completion;
@@ -1276,8 +1333,101 @@ class AiCrmService {
       const detail = String(body.error?.message || safeJson(body) || "Error desconocido").slice(0, 800);
       throw new Error(`API IA ${response.status}: ${detail}`);
     }
-    const content = body.choices?.[0]?.message?.content;
+    const rawContent = body.choices?.[0]?.message?.content;
+    const content = Array.isArray(rawContent)
+      ? rawContent.map((part) => part?.text || part?.content || "").join("")
+      : rawContent;
     if (!content) throw new Error("La API IA no devolvió contenido compatible con OpenAI");
+    try {
+      return parseModelJson(content);
+    } catch (error) {
+      if (error.code !== "AI_MODEL_INVALID_JSON" || retried) throw error;
+      const retryCompletion = await requestCompletion({ jsonMode: false, retry: true });
+      if (!retryCompletion.response.ok) {
+        const detail = String(retryCompletion.body?.error?.message || safeJson(retryCompletion.body) || "Error desconocido").slice(0, 800);
+        throw new Error(`API IA ${retryCompletion.response.status}: ${detail}`);
+      }
+      const retryRawContent = retryCompletion.body.choices?.[0]?.message?.content;
+      const retryContent = Array.isArray(retryRawContent)
+        ? retryRawContent.map((part) => part?.text || part?.content || "").join("")
+        : retryRawContent;
+      return parseModelJson(retryContent);
+    }
+  }
+
+  async callVisionModel(config, system, prompt, imageDataUri) {
+    const imageMatch = String(imageDataUri || "").match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([a-zA-Z0-9+/=\r\n]+)$/i);
+    if (!imageMatch) {
+      const error = new Error("La imagen para IA debe ser JPEG, PNG, WEBP o GIF en Base64");
+      error.statusCode = 400;
+      throw error;
+    }
+    const compactSystem = boundedText(system, config._systemCharBudget || 18000);
+    const compactPrompt = boundedText(prompt, config._historyMessageCharBudget || 7000);
+    const mimeType = imageMatch[1].toLowerCase();
+    const base64Data = imageMatch[2].replace(/\s/g, "");
+    const normalizedDataUri = `data:${mimeType};base64,${base64Data}`;
+    const maxOutputTokens = Math.max(128, Math.min(1200, Number(config._maxOutputTokens || 700)));
+    const configuredProvider = String(config.aiProvider || "").trim().toLowerCase();
+    const configuredModel = String(config.aiModel || "").trim().toLowerCase();
+    const visionModel = configuredProvider === "groq" && !/^qwen\/qwen3(?:\.|-|$)/.test(configuredModel)
+      ? GROQ_VISION_FALLBACK_MODEL
+      : config.aiModel;
+    const visionConfig = { ...config, aiModel: visionModel, _maxRequestBytes: MAX_AI_VISION_REQUEST_BYTES };
+
+    if (config.aiProvider === "gemini") {
+      const geminiUrl = parseSafeHttpUrl(renderString(config.aiApiUrl, { model: config.aiModel }));
+      if (!geminiUrl.searchParams.has("key")) geminiUrl.searchParams.set("key", config.aiApiToken);
+      const { response, body } = await requestAiJson(visionConfig, geminiUrl, {
+        systemInstruction: { parts: [{ text: compactSystem }] },
+        generationConfig: { temperature: config.temperature ?? 0.25, responseMimeType: "application/json", maxOutputTokens },
+        contents: [{
+          role: "user",
+          parts: [{ text: compactPrompt }, { inlineData: { mimeType, data: base64Data } }],
+        }],
+      }, { "Content-Type": "application/json" });
+      if (!response.ok) {
+        const detail = String(body.error?.message || safeJson(body) || "Error desconocido").slice(0, 800);
+        throw new Error(`API Gemini ${response.status}: ${detail}`);
+      }
+      return parseModelJson(body.candidates?.[0]?.content?.parts?.map((part) => part.text).join("") || "");
+    }
+
+    const requestBody = {
+      model: visionModel,
+      temperature: config.temperature ?? 0.25,
+      max_tokens: maxOutputTokens,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: compactSystem },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: compactPrompt },
+            { type: "image_url", image_url: { url: normalizedDataUri, detail: "auto" } },
+          ],
+        },
+      ],
+    };
+    const provider = configuredProvider;
+    const model = String(visionModel || "").trim().toLowerCase();
+    if (provider === "groq" && /^qwen\/qwen3(?:\.|-|$)/.test(model)) {
+      requestBody.reasoning_effort = "none";
+      requestBody.reasoning_format = "hidden";
+    }
+    const { response, body } = await requestAiJson(visionConfig, config.aiApiUrl, requestBody, {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.aiApiToken}`,
+    });
+    if (!response.ok) {
+      const detail = String(body.error?.message || safeJson(body) || "Error desconocido").slice(0, 800);
+      throw new Error(`API IA multimodal ${response.status}: ${detail}`);
+    }
+    const rawContent = body.choices?.[0]?.message?.content;
+    const content = Array.isArray(rawContent)
+      ? rawContent.map((part) => part?.text || part?.content || "").join("")
+      : rawContent;
+    if (!content) throw new Error("El modelo multimodal no devolvió contenido");
     return parseModelJson(content);
   }
 

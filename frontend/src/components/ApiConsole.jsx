@@ -8,19 +8,21 @@ import {
 import { 
   PlayArrow, ContentCopy, Code, Terminal, 
   CheckCircle, Error as ErrorIcon, Wifi,
-  FolderOpen, InsertDriveFile, Image, Audiotrack
+  FolderOpen, InsertDriveFile, Image, Audiotrack, Videocam
 } from '@mui/icons-material';
 import { API_HOST, apiUrl } from '../utils/apiUrl';
 
-const ApiConsole = ({ mode = 'public', userToken = null }) => {
+const ApiConsole = ({ mode = 'public', userToken = null, sessionId = '' }) => {
   const theme = useTheme();
+  const sessionSegment = encodeURIComponent(sessionId || 'SESSION_ID');
+  const messagesBase = `/api/v1/sessions/${sessionSegment}/messages`;
   const [method, setMethod] = useState('POST');
   const [activeTab, setActiveTab] = useState(0); // 0: Body, 1: Auth, 2: Response
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState(null);
 
   // Initial State
-  const [endpoint, setEndpoint] = useState('/api/v1/messages/text');
+  const [endpoint, setEndpoint] = useState(`${messagesBase}/text`);
   const [body, setBody] = useState('');
   const requestUrl = apiUrl(endpoint);
 
@@ -28,7 +30,7 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
     {
       name: 'Text Message',
       method: 'POST',
-      endpoint: '/api/v1/messages/text',
+      endpoint: `${messagesBase}/text`,
       icon: <Code fontSize="small" />,
       body: {
         recipient: "5215500000000",
@@ -38,7 +40,7 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
     {
       name: 'Image (URL)',
       method: 'POST',
-      endpoint: '/api/v1/messages/media',
+      endpoint: `${messagesBase}/media`,
       icon: <Image fontSize="small" />,
       body: {
         recipient: "5215500000000",
@@ -50,19 +52,46 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
     {
       name: 'Image (Base64)',
       method: 'POST',
-      endpoint: '/api/v1/messages/media',
+      endpoint: `${messagesBase}/media`,
       icon: <Image fontSize="small" />,
       body: {
         recipient: "5215500000000",
         type: "image",
-        payload: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        mimetype: "image/png",
         caption: "Base64 Image"
+      }
+    },
+    {
+      name: 'Video (URL)',
+      method: 'POST',
+      endpoint: `${messagesBase}/media`,
+      icon: <Videocam fontSize="small" />,
+      body: {
+        recipient: "5215500000000",
+        type: "video",
+        payload: "https://example.com/video.mp4",
+        mimetype: "video/mp4",
+        caption: "Video de la campaña"
+      }
+    },
+    {
+      name: 'Video (Base64)',
+      method: 'POST',
+      endpoint: `${messagesBase}/media`,
+      icon: <Videocam fontSize="small" />,
+      body: {
+        recipient: "5215500000000",
+        type: "video",
+        base64: "AAAAIGZ0eXBpc29tLi4u",
+        mimetype: "video/mp4",
+        caption: "Video Base64"
       }
     },
     {
       name: 'Document (URL)',
       method: 'POST',
-      endpoint: '/api/v1/messages/media',
+      endpoint: `${messagesBase}/media`,
       icon: <InsertDriveFile fontSize="small" />,
       body: {
         recipient: "5215500000000",
@@ -74,20 +103,48 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
     {
       name: 'Audio (URL)',
       method: 'POST',
-      endpoint: '/api/v1/messages/media',
+      endpoint: `${messagesBase}/media`,
       icon: <Audiotrack fontSize="small" />,
       body: {
         recipient: "5215500000000",
         type: "audio",
         payload: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
       }
+    },
+    {
+      name: 'Audio (Base64)',
+      method: 'POST',
+      endpoint: `${messagesBase}/media`,
+      icon: <Audiotrack fontSize="small" />,
+      body: {
+        recipient: "5215500000000",
+        type: "audio",
+        base64: "SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjI5LjEwMA==",
+        mimetype: "audio/mpeg"
+      }
+    },
+    {
+      name: 'Document (Base64)',
+      method: 'POST',
+      endpoint: `${messagesBase}/media`,
+      icon: <InsertDriveFile fontSize="small" />,
+      body: {
+        recipient: "5215500000000",
+        type: "document",
+        base64: "JVBERi0xLjQKJcTl8uXrCg==",
+        mimetype: "application/pdf",
+        filename: "oferta.pdf",
+        caption: "Condiciones de la oferta"
+      }
     }
   ];
 
   // Load first collection item on mount
   useEffect(() => {
+    setEndpoint(collections[0].endpoint);
     setBody(JSON.stringify(collections[0].body, null, 2));
-  }, []);
+    setResponse(null);
+  }, [sessionId]);
 
   const handleSelectRequest = (item) => {
     setEndpoint(item.endpoint);

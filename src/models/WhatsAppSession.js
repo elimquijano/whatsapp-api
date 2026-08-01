@@ -17,6 +17,14 @@ const WhatsAppSession = sequelize.define("WhatsAppSession", {
     type: DataTypes.STRING,
     allowNull: false,
   },
+  phoneNumber: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  displayName: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
   webhookUrl: {
     type: DataTypes.STRING(2048),
     allowNull: true,
