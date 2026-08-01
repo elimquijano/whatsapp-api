@@ -351,15 +351,15 @@ const Landing = () => {
             {/* Starter Plan */}
             <Grid item xs={12} md={4}>
               <Paper sx={{ p: 4, borderRadius: 4, height: '100%', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column' }}>
-                <Typography variant="h6" sx={{ fontWeight: 800, color: '#64748b' }}>Starter</Typography>
+                <Typography variant="h6" sx={{ fontWeight: 800, color: '#64748b' }}>Free Trial</Typography>
                 <Box sx={{ my: 2 }}>
-                   <Typography variant="h3" sx={{ fontWeight: 900, display: 'inline' }}>$3</Typography>
-                   <Typography variant="body1" color="text.secondary" sx={{ display: 'inline' }}>/mes</Typography>
+                   <Typography variant="h3" sx={{ fontWeight: 900, display: 'inline' }}>$0</Typography>
+                   <Typography variant="body1" color="text.secondary" sx={{ display: 'inline' }}>/3 días</Typography>
                 </Box>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>Para desarrolladores independientes y pruebas.</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>Todo Premium gratis durante 3 días, sin tarjeta.</Typography>
                 <Divider sx={{ mb: 4 }} />
                 <Stack spacing={2} sx={{ mb: 4, flexGrow: 1 }}>
-                  {['1 Sesión de WhatsApp', 'Mensajes de Texto Ilimitados', 'Soporte Comunitario', 'API REST Básica'].map((item, i) => (
+                  {['1 sesión de WhatsApp', 'Webhook de la sesión', 'Todos los endpoints', 'Texto, imágenes, audio, video y archivos'].map((item, i) => (
                     <Box key={i} sx={{ display: 'flex', alignItems: 'center' }}>
                       <CheckCircle sx={{ fontSize: 20, mr: 1.5, color: '#cbd5e1' }} />
                       <Typography variant="body2" sx={{ fontWeight: 500 }}>{item}</Typography>
@@ -384,15 +384,15 @@ const Landing = () => {
                 zIndex: 2
               }}>
                 <Chip label="MÁS POPULAR" size="small" sx={{ position: 'absolute', top: 20, right: 20, bgcolor: '#38bdf8', color: '#0f172a', fontWeight: 800 }} />
-                <Typography variant="h6" sx={{ fontWeight: 800, color: '#38bdf8' }}>Professional</Typography>
+                <Typography variant="h6" sx={{ fontWeight: 800, color: '#38bdf8' }}>Premium</Typography>
                 <Box sx={{ my: 2 }}>
-                   <Typography variant="h3" sx={{ fontWeight: 900, display: 'inline' }}>${billingCycle === 'monthly' ? '7' : '67'}</Typography>
+                   <Typography variant="h3" sx={{ fontWeight: 900, display: 'inline' }}>${billingCycle === 'monthly' ? '3' : '29'}</Typography>
                    <Typography variant="body1" sx={{ color: '#94a3b8', display: 'inline' }}>/{billingCycle === 'monthly' ? 'mes' : 'año'}</Typography>
                 </Box>
-                <Typography variant="body2" sx={{ color: '#94a3b8', mb: 4 }}>Para negocios que necesitan escalar.</Typography>
+                <Typography variant="body2" sx={{ color: '#94a3b8', mb: 4 }}>La API completa para una línea de WhatsApp.</Typography>
                 <Divider sx={{ mb: 4, borderColor: 'rgba(255,255,255,0.1)' }} />
                 <Stack spacing={2} sx={{ mb: 4, flexGrow: 1 }}>
-                  {['5 Sesiones Simultáneas', 'Multimedia (Img, Video, Audio)', 'Prioridad en Cola de Envío', 'Soporte Técnico Directo', 'Webhooks Avanzados'].map((item, i) => (
+                  {['1 sesión de WhatsApp', 'Webhook de la sesión', 'Todos los endpoints', 'Texto, imágenes, audio, video y archivos'].map((item, i) => (
                     <Box key={i} sx={{ display: 'flex', alignItems: 'center' }}>
                       <CheckCircle sx={{ fontSize: 20, mr: 1.5, color: '#38bdf8' }} />
                       <Typography variant="body2" sx={{ fontWeight: 500 }}>{item}</Typography>
@@ -400,7 +400,7 @@ const Landing = () => {
                   ))}
                 </Stack>
                 <Button fullWidth variant="contained" sx={{ py: 1.5, borderRadius: 2, fontWeight: 700, bgcolor: '#38bdf8', color: '#0f172a', '&:hover': { bgcolor: '#7dd3fc' } }} onClick={() => navigate('/login', { state: { showRegister: true } })}>
-                  Prueba Gratis (3 días)
+                  Elegir Premium
                 </Button>
               </Paper>
             </Grid>
@@ -408,14 +408,15 @@ const Landing = () => {
              {/* Enterprise Plan */}
              <Grid item xs={12} md={4}>
               <Paper sx={{ p: 4, borderRadius: 4, height: '100%', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column' }}>
-                <Typography variant="h6" sx={{ fontWeight: 800, color: '#64748b' }}>Enterprise</Typography>
+                <Typography variant="h6" sx={{ fontWeight: 800, color: '#64748b' }}>Profesional</Typography>
                 <Box sx={{ my: 2 }}>
-                   <Typography variant="h3" sx={{ fontWeight: 900, display: 'inline' }}>Custom</Typography>
+                   <Typography variant="h3" sx={{ fontWeight: 900, display: 'inline' }}>${billingCycle === 'monthly' ? '7' : '67'}</Typography>
+                   <Typography variant="body1" color="text.secondary" sx={{ display: 'inline' }}>/{billingCycle === 'monthly' ? 'mes' : 'año'}</Typography>
                 </Box>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>Soluciones a medida para alto volumen.</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>Cinco líneas, automatización y herramientas comerciales.</Typography>
                 <Divider sx={{ mb: 4 }} />
                 <Stack spacing={2} sx={{ mb: 4, flexGrow: 1 }}>
-                  {['Instancia Dedicada', 'SLA 99.99%', 'Account Manager', 'Contrato Personalizado'].map((item, i) => (
+                  {['Todo lo incluido en Premium', '5 sesiones simultáneas', 'Webhook separado por cada sesión', 'IA + CRM con workflows visuales', 'Bandeja de conversaciones con atención humana/IA', 'Campañas e importación de clientes'].map((item, i) => (
                     <Box key={i} sx={{ display: 'flex', alignItems: 'center' }}>
                       <CheckCircle sx={{ fontSize: 20, mr: 1.5, color: '#cbd5e1' }} />
                       <Typography variant="body2" sx={{ fontWeight: 500 }}>{item}</Typography>
@@ -423,7 +424,7 @@ const Landing = () => {
                   ))}
                 </Stack>
                 <Button fullWidth variant="outlined" sx={{ py: 1.5, borderRadius: 2, fontWeight: 700, border: '2px solid' }}>
-                  Contactar Ventas
+                  Elegir Profesional
                 </Button>
               </Paper>
             </Grid>
@@ -440,7 +441,7 @@ const Landing = () => {
           </Box>
           <Stack spacing={2}>
             {[
-              { q: '¿Cómo funciona la prueba de 3 días?', a: 'Al registrarte, se te asigna automáticamente el plan Professional completo por 72 horas. No requiere tarjeta de crédito.' },
+              { q: '¿Cómo funciona la prueba de 3 días?', a: 'Al registrarte, recibes automáticamente todas las funciones del plan Premium durante 72 horas. No requiere tarjeta de crédito.' },
               { q: '¿Necesito mantener mi teléfono encendido?', a: 'No. Nuestra infraestructura utiliza la tecnología Multi-Device de WhatsApp, por lo que tu teléfono no necesita estar conectado una vez vinculada la sesión.' },
               { q: '¿Puedo enviar mensajes masivos?', a: 'Sí, pero debes respetar las políticas de SPAM de WhatsApp para evitar bloqueos. Nuestra API incluye herramientas para gestionar la velocidad de envío.' },
               { q: '¿Qué sucede si excedo el límite de mi plan?', a: 'El sistema pausará los envíos y recibirás una notificación. Puedes actualizar tu plan en cualquier momento desde el panel.' },

@@ -6,6 +6,7 @@ import {
 import { ArrowBack, Menu as MenuIcon, Code, Webhook, Security, Send, Description } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { API_ORIGIN } from '../utils/apiUrl';
 
 const CodeBlock = ({ code, language = 'json' }) => (
   <Paper 
@@ -117,7 +118,7 @@ const PublicDocumentation = () => {
             </Typography>
             <Box sx={{ p: 2, bgcolor: '#e0f2fe', borderRadius: 2, border: '1px solid #bae6fd', color: '#0369a1' }}>
               <Typography variant="body2" fontWeight={600}>
-                Base URL: <code style={{ background: 'rgba(255,255,255,0.5)', padding: '2px 6px', borderRadius: 4 }}>https://api.tudominio.com</code>
+                Base URL: <code style={{ background: 'rgba(255,255,255,0.5)', padding: '2px 6px', borderRadius: 4 }}>{API_ORIGIN}</code>
               </Typography>
             </Box>
           </Section>

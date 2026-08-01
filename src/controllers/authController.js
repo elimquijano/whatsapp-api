@@ -121,7 +121,7 @@ export const register = async (req, res) => {
       return res.status(400).json({ success: false, error: "Código de verificación inválido o expirado." });
     }
 
-    const trialPlan = await Plan.findOne({ where: { name: "Trial" } });
+    const trialPlan = await Plan.findOne({ where: { name: "Free Trial" } });
     const userRole = await Role.findOne({ where: { name: "user" } });
 
     const expirationDate = new Date();

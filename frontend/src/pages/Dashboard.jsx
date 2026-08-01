@@ -1,288 +1,376 @@
 import React, { useState } from 'react';
 import {
-  Container, Grid, Typography, Box, Paper,
-  List, ListItem, ListItemIcon, ListItemText, Divider,
-  AppBar, Toolbar, IconButton, Avatar, Menu, MenuItem, Tooltip,
-  ListItemButton, useTheme, TextField, Button, Alert, CircularProgress
+  Alert,
+  AppBar,
+  Avatar,
+  Box,
+  Button,
+  Chip,
+  Container,
+  Divider,
+  Drawer,
+  Grid,
+  IconButton,
+  List,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
+  Paper,
+  Stack,
+  TextField,
+  Toolbar,
+  Tooltip,
+  Typography,
+  alpha,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import {
+  AutoAwesome,
+  Campaign as CampaignIcon,
+  Chat,
+  ChevronRight,
+  Code as CodeIcon,
+  ContentCopy,
   Dashboard as DashboardIcon,
-  People,
+  DarkMode,
+  LightMode,
   Logout,
   Menu as MenuIcon,
-  Code as CodeIcon,
+  People,
   Visibility,
   VisibilityOff,
-  ContentCopy,
-  Webhook as WebhookIcon,
-  Save
+  WhatsApp,
 } from '@mui/icons-material';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { useNavigate, useLocation, Routes, Route, Navigate } from 'react-router-dom';
+import { useColorMode } from '../context/ColorModeContext';
 import WhatsAppConnector from '../components/WhatsAppConnector';
 import MessageSender from '../components/MessageSender';
 import ApiConsole from '../components/ApiConsole';
 import Users from './Users';
-import axios from 'axios';
+import CrmInbox from './CrmInbox';
+import Campaigns from './Campaigns';
+import AiCrmConfigPage from './AiCrmConfigPage';
 
-// Minimalist API Key Component
+const SIDEBAR_WIDTH = 276;
+
+const PageIntro = ({ eyebrow, title, description, action }) => (
+  <Stack
+    direction={{ xs: 'column', sm: 'row' }}
+    alignItems={{ xs: 'flex-start', sm: 'center' }}
+    justifyContent="space-between"
+    spacing={2}
+    sx={{ mb: { xs: 2.5, md: 3.5 } }}
+  >
+    <Box sx={{ minWidth: 0 }}>
+      {eyebrow && (
+        <Typography variant="overline" color="primary.main" sx={{ fontWeight: 850, letterSpacing: 1.2 }}>
+          {eyebrow}
+        </Typography>
+      )}
+      <Typography variant="h4" sx={{ fontSize: { xs: '1.65rem', md: '2rem' } }}>{title}</Typography>
+      {description && <Typography color="text.secondary" sx={{ mt: 0.6, maxWidth: 720 }}>{description}</Typography>}
+    </Box>
+    {action}
+  </Stack>
+);
+
 const ApiKeyDisplay = () => {
   const { user } = useAuth();
   const [show, setShow] = useState(false);
-  const apiKey = user?.apiKey || 'No disponible (Re-inicia sesión)';
+  const [copied, setCopied] = useState(false);
+  const apiKey = user?.apiKey || 'No disponible. Vuelve a iniciar sesión.';
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(apiKey);
-    alert('API Key copiada al portapapeles');
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(apiKey);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
   };
 
   return (
-    <Paper 
-      elevation={0}
-      sx={{ 
-        p: 2, 
-        mb: 4, 
-        display: 'flex', 
-        alignItems: 'center', 
-        gap: 2, 
-        bgcolor: '#1e293b', 
-        color: 'white',
-        borderRadius: 3,
-        border: '1px solid #334155'
-      }}
+    <Paper variant="outlined" sx={{ p: { xs: 2, md: 2.5 }, mb: 3, overflow: 'hidden' }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ xs: 'stretch', sm: 'center' }} spacing={1.5}>
+        <Chip label="API KEY" color="primary" size="small" sx={{ alignSelf: { xs: 'flex-start', sm: 'center' } }} />
+        <TextField
+          value={show ? apiKey : '•'.repeat(32)}
+          size="small"
+          fullWidth
+          aria-label="API Key"
+          InputProps={{
+            readOnly: true,
+            sx: { fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', letterSpacing: show ? 0 : 2 },
+            endAdornment: (
+              <Stack direction="row" spacing={0.5}>
+                <Tooltip title={show ? 'Ocultar' : 'Mostrar'}>
+                  <IconButton size="small" onClick={() => setShow((current) => !current)}>
+                    {show ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title={copied ? 'Copiada' : 'Copiar'}>
+                  <IconButton size="small" color={copied ? 'success' : 'primary'} onClick={handleCopy}>
+                    <ContentCopy fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Stack>
+            ),
+          }}
+        />
+      </Stack>
+    </Paper>
+  );
+};
+
+const SubscriptionCard = ({ user, onNavigate }) => {
+  const planName = user?.planData?.name || user?.plan || 'Sin plan';
+  const expiration = user?.expirationDate ? new Date(user.expirationDate).toLocaleDateString() : 'Sin vencimiento';
+  const professional = user?.planData?.features?.includes('ai_crm');
+
+  return (
+    <Paper
+      sx={(theme) => ({
+        p: 3,
+        color: '#f8fafc',
+        background: `linear-gradient(145deg, ${theme.palette.mode === 'dark' ? '#172554' : '#0f172a'} 0%, #172033 54%, #0c4a6e 100%)`,
+        border: `1px solid ${alpha('#38bdf8', 0.22)}`,
+        overflow: 'hidden',
+        position: 'relative',
+      })}
     >
-      <Box sx={{ bgcolor: '#38bdf8', px: 1, py: 0.5, borderRadius: 1, color: '#0f172a', fontWeight: 800, fontSize: '0.75rem' }}>
-        API KEY PERMANENTE
-      </Box>
-      <TextField
-        value={show ? apiKey : '•'.repeat(32)}
-        variant="standard"
-        fullWidth
-        InputProps={{ 
-          disableUnderline: true, 
-          readOnly: true, 
-          sx: { 
-            color: 'white', 
-            fontFamily: 'monospace',
-            fontSize: '0.9rem',
-            letterSpacing: show ? 0 : 2
-          } 
-        }}
-      />
-      <Tooltip title={show ? "Ocultar" : "Mostrar"}>
-        <IconButton onClick={() => setShow(!show)} sx={{ color: '#94a3b8' }}>
-          {show ? <VisibilityOff /> : <Visibility />}
-        </IconButton>
-      </Tooltip>
-      <Tooltip title="Copiar API Key">
-        <IconButton onClick={handleCopy} sx={{ color: '#38bdf8' }}>
-          <ContentCopy />
-        </IconButton>
-      </Tooltip>
-    </Paper>
-  );
-};
-
-const WebhookConfig = ({ currentUrl }) => {
-  const [url, setUrl] = useState(currentUrl || '');
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState(null);
-
-  const handleSave = async () => {
-    setLoading(true);
-    setMsg(null);
-    try {
-      const token = localStorage.getItem('token');
-      await axios.put('/api/users/webhook', { webhookUrl: url }, { headers: { Authorization: `Bearer ${token}` } });
-      setMsg({ type: 'success', text: 'Webhook actualizado correctamente' });
-    } catch (err) {
-      setMsg({ type: 'error', text: err.response?.data?.error || 'Error al guardar' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Paper sx={{ p: 4, borderRadius: 4, bgcolor: 'white', mt: 4 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-        <WebhookIcon sx={{ mr: 1, color: '#f59e0b' }} />
-        <Typography variant="h6" sx={{ fontWeight: 800, color: '#1e293b' }}>Configuración Webhook</Typography>
-      </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Recibe notificaciones en tiempo real cuando lleguen mensajes a tu número.
-      </Typography>
-      
-      <Grid container spacing={2} alignItems="center">
-        <Grid item xs={12} md={9}>
-           <TextField 
-             fullWidth 
-             label="URL del Webhook (https://...)" 
-             variant="outlined" 
-             value={url}
-             onChange={(e) => setUrl(e.target.value)}
-             size="small"
-           />
-        </Grid>
-        <Grid item xs={12} md={3}>
-           <Button 
-             fullWidth 
-             variant="contained" 
-             startIcon={loading ? <CircularProgress size={20} color="inherit"/> : <Save />}
-             onClick={handleSave}
-             disabled={loading}
-             sx={{ bgcolor: '#0f172a', fontWeight: 700 }}
-           >
-             Guardar
-           </Button>
-        </Grid>
-      </Grid>
-      {msg && <Alert severity={msg.type} sx={{ mt: 2 }}>{msg.text}</Alert>}
-    </Paper>
-  );
-};
-
-const DashboardHome = ({ user }) => (
-  <Grid container spacing={4}>
-    <Grid item xs={12} lg={8}>
-      <WhatsAppConnector />
-      {user?.planData?.features?.includes('webhook') && (
-        <WebhookConfig currentUrl={user?.webhookUrl} />
-      )}
-    </Grid>
-    <Grid item xs={12} lg={4}>
-      <MessageSender />
-      <Paper sx={{ p: 4, mt: 4, borderRadius: 4, bgcolor: '#1e293b', color: 'white' }}>
-        <Typography variant="h5" gutterBottom sx={{ color: '#0ea5e9', fontWeight: 'bold' }}>Suscripción</Typography>
-        <Box sx={{ mt: 3 }}>
-          <Typography variant="subtitle1">Plan: <b>{user?.plan}</b></Typography>
-          <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 1 }}>
-            Vence: {user?.expirationDate ? new Date(user.expirationDate).toLocaleDateString() : 'N/A'}
-          </Typography>
+      <Box sx={{ position: 'absolute', width: 150, height: 150, borderRadius: '50%', bgcolor: alpha('#38bdf8', 0.12), top: -72, right: -38 }} />
+      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ position: 'relative' }}>
+        <Box>
+          <Typography variant="overline" sx={{ color: '#7dd3fc', fontWeight: 800, letterSpacing: 1.1 }}>Tu suscripción</Typography>
+          <Typography variant="h5" sx={{ mt: 0.25 }}>{planName}</Typography>
+          <Typography variant="body2" sx={{ mt: 0.75, color: alpha('#f8fafc', 0.7) }}>Vigencia: {expiration}</Typography>
         </Box>
-      </Paper>
+        <AutoAwesome sx={{ color: '#7dd3fc' }} />
+      </Stack>
+      {professional && (
+        <Stack spacing={1} sx={{ mt: 3, position: 'relative' }}>
+          <Button fullWidth variant="contained" color="primary" endIcon={<ChevronRight />} onClick={() => onNavigate('/dashboard/crm')}>
+            Abrir CRM
+          </Button>
+          <Button fullWidth variant="text" sx={{ color: '#bae6fd' }} endIcon={<ChevronRight />} onClick={() => onNavigate('/dashboard/campaigns')}>
+            Crear campaña
+          </Button>
+        </Stack>
+      )}
+    </Paper>
+  );
+};
+
+const DashboardHome = ({ user, onNavigate }) => (
+  <Box>
+    <PageIntro
+      eyebrow="Centro de operaciones"
+      title={`Hola${user?.username ? `, ${user.username}` : ''}`}
+      description="Conecta tus sesiones, supervisa su estado y gestiona tus conversaciones desde un solo lugar."
+      action={<Chip icon={<WhatsApp />} color="success" variant="outlined" label="Canal WhatsApp" />}
+    />
+    <Grid container spacing={{ xs: 2, md: 3 }} alignItems="flex-start">
+      <Grid item xs={12} xl={8} sx={{ minWidth: 0 }}>
+        <WhatsAppConnector />
+      </Grid>
+      <Grid item xs={12} xl={4} sx={{ minWidth: 0 }}>
+        <Stack spacing={{ xs: 2, md: 3 }}>
+          <SubscriptionCard user={user} onNavigate={onNavigate} />
+          <MessageSender />
+        </Stack>
+      </Grid>
     </Grid>
-  </Grid>
+  </Box>
 );
 
 const Dashboard = () => {
   const { user, logout } = useAuth();
+  const { mode, toggleMode } = useColorMode();
   const navigate = useNavigate();
   const location = useLocation();
   const theme = useTheme();
+  const desktop = useMediaQuery(theme.breakpoints.up('md'));
   const [anchorEl, setAnchorEl] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
-
-  const handleMenu = (event) => setAnchorEl(event.currentTarget);
-  const handleClose = () => setAnchorEl(null);
-  const handleDrawerToggle = () => setMobileOpen(!mobileOpen);
-
-  const handleLogout = () => {
-    handleClose();
-    logout();
-  };
-
   const isPlanExpired = user?.expirationDate && new Date() > new Date(user.expirationDate);
-  
+  const hasCrm = user?.planData?.features?.includes('ai_crm');
+
   const menuItems = [
-    { text: 'Panel de Control', icon: <DashboardIcon />, path: '/dashboard' },
+    { text: 'Panel de control', icon: <DashboardIcon />, path: '/dashboard' },
     { text: 'Documentación API', icon: <CodeIcon />, path: '/dashboard/docs' },
-    ...(user?.role === 'admin' ? [{ text: 'Gestionar Usuarios', icon: <People />, path: '/dashboard/users' }] : [])
+    ...(hasCrm ? [
+      { text: 'CRM y conversaciones', icon: <Chat />, path: '/dashboard/crm' },
+      { text: 'Campañas', icon: <CampaignIcon />, path: '/dashboard/campaigns' },
+    ] : []),
+    ...(user?.role === 'admin' ? [{ text: 'Usuarios', icon: <People />, path: '/dashboard/users' }] : []),
   ];
 
+  const selected = (path) => path === '/dashboard'
+    ? location.pathname === path || location.pathname === `${path}/`
+    : location.pathname.startsWith(path);
+  const activeItem = location.pathname.startsWith('/dashboard/ai/')
+    ? { text: 'Configuración IA' }
+    : [...menuItems].reverse().find((item) => selected(item.path));
+  const workspace = location.pathname.startsWith('/dashboard/crm') || location.pathname.startsWith('/dashboard/ai/');
+
+  const goTo = (path) => {
+    navigate(path);
+    setMobileOpen(false);
+  };
+
   const drawerContent = (
-    <Box sx={{ height: '100%', bgcolor: '#0f172a', color: 'white' }}>
-      <Box sx={{ p: 4, textAlign: 'center' }}>
-        <Typography variant="h5" sx={{ fontWeight: 900, color: 'primary.main', letterSpacing: '-0.5px' }}>
-          WA-API<span style={{ color: 'white' }}>PRO</span>
+    <Box sx={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', bgcolor: 'surface.sidebar', color: '#e2e8f0' }}>
+      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2.5, height: 72, flexShrink: 0 }}>
+        <Box sx={{ width: 38, height: 38, display: 'grid', placeItems: 'center', borderRadius: 2.5, background: 'linear-gradient(135deg, #0ea5e9, #2563eb)' }}>
+          <WhatsApp sx={{ fontSize: 22, color: 'white' }} />
+        </Box>
+        <Box>
+          <Typography sx={{ color: 'white', fontWeight: 900, lineHeight: 1.05, letterSpacing: '-0.03em' }}>WA API</Typography>
+          <Typography variant="caption" sx={{ color: '#7dd3fc', fontWeight: 800, letterSpacing: 1 }}>CRM PRO</Typography>
+        </Box>
+      </Stack>
+      <Divider sx={{ borderColor: alpha('#94a3b8', 0.16) }} />
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', py: 2 }}>
+        <Typography variant="overline" sx={{ display: 'block', px: 2.5, mb: 0.75, color: '#64748b', fontWeight: 800, letterSpacing: 1.2 }}>
+          Navegación
         </Typography>
-      </Box>
-      <Divider sx={{ bgcolor: 'rgba(255,255,255,0.1)' }} />
-      <List sx={{ mt: 2, px: 2 }}>
-        {menuItems.map((item) => {
-          const isSelected = location.pathname === item.path;
-          return (
-            <ListItem disablePadding key={item.text} sx={{ mb: 1 }}>
-              <ListItemButton 
-                onClick={() => navigate(item.path)} 
+        <List disablePadding sx={{ px: 1.5 }}>
+          {menuItems.map((item) => {
+            const isSelected = selected(item.path);
+            return (
+              <ListItemButton
+                key={item.path}
                 selected={isSelected}
-                sx={{ 
-                  borderRadius: 2, 
-                  bgcolor: isSelected ? 'rgba(14, 165, 233, 0.1) !important' : 'transparent',
-                  '&:hover': { bgcolor: 'rgba(255,255,255,0.05)' }
+                onClick={() => goTo(item.path)}
+                sx={{
+                  minHeight: 46,
+                  mb: 0.5,
+                  px: 1.5,
+                  borderRadius: 2.5,
+                  color: isSelected ? '#ffffff' : '#a8b3c5',
+                  '&.Mui-selected': { bgcolor: alpha('#0ea5e9', 0.17), '&:hover': { bgcolor: alpha('#0ea5e9', 0.22) } },
+                  '&:hover': { bgcolor: alpha('#ffffff', 0.055), color: '#ffffff' },
                 }}
               >
-                <ListItemIcon sx={{ color: isSelected ? '#0ea5e9' : 'rgba(255,255,255,0.7)' }}>{item.icon}</ListItemIcon>
-                <ListItemText primary={item.text} primaryTypographyProps={{ fontWeight: isSelected ? 700 : 500 }} />
+                <ListItemIcon sx={{ color: isSelected ? '#38bdf8' : 'inherit', minWidth: 38 }}>{item.icon}</ListItemIcon>
+                <ListItemText primary={item.text} primaryTypographyProps={{ fontSize: 14, fontWeight: isSelected ? 800 : 600 }} />
+                {isSelected && <Box sx={{ width: 4, height: 22, borderRadius: 4, bgcolor: 'primary.main' }} />}
               </ListItemButton>
-            </ListItem>
-          );
-        })}
-      </List>
+            );
+          })}
+        </List>
+      </Box>
+      <Box sx={{ p: 1.5, flexShrink: 0 }}>
+        <Paper sx={{ p: 1.5, bgcolor: alpha('#ffffff', 0.055), color: 'inherit', border: `1px solid ${alpha('#94a3b8', 0.14)}`, boxShadow: 'none' }}>
+          <Stack direction="row" spacing={1.2} alignItems="center">
+            <Avatar sx={{ width: 35, height: 35, bgcolor: isPlanExpired ? 'error.main' : 'primary.main', fontSize: 14, fontWeight: 800 }}>
+              {(user?.username?.[0] || 'U').toUpperCase()}
+            </Avatar>
+            <Box sx={{ minWidth: 0, flex: 1 }}>
+              <Typography variant="body2" noWrap sx={{ color: 'white', fontWeight: 800 }}>{user?.username}</Typography>
+              <Typography variant="caption" noWrap sx={{ color: '#94a3b8', display: 'block' }}>{user?.planData?.name || user?.plan || user?.role}</Typography>
+            </Box>
+          </Stack>
+        </Paper>
+      </Box>
     </Box>
   );
 
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: '#f1f5f9' }}>
-      {/* Sidebar Desktop */}
-      <Box sx={{ width: 280, flexShrink: 0, display: { xs: 'none', md: 'block' } }}>
-        {drawerContent}
-      </Box>
+    <Box sx={{ height: '100dvh', maxHeight: '100dvh', display: 'flex', overflow: 'hidden', bgcolor: 'background.default' }}>
+      {desktop ? (
+        <Box component="aside" sx={{ width: SIDEBAR_WIDTH, height: '100dvh', flexShrink: 0, overflow: 'hidden' }}>{drawerContent}</Box>
+      ) : (
+        <Drawer
+          open={mobileOpen}
+          onClose={() => setMobileOpen(false)}
+          ModalProps={{ keepMounted: true }}
+          PaperProps={{ sx: { width: 'min(86vw, 304px)', overflow: 'hidden', border: 0 } }}
+        >
+          {drawerContent}
+        </Drawer>
+      )}
 
-      {/* Main Content */}
-      <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', width: { md: `calc(100% - 280px)` } }}>
-        <AppBar position="sticky" color="inherit" elevation={0} sx={{ borderBottom: '1px solid #e2e8f0', bgcolor: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(8px)' }}>
-          <Toolbar>
-            <IconButton edge="start" onClick={handleDrawerToggle} sx={{ mr: 2, display: { md: 'none' } }}>
+      <Box sx={{ flex: 1, minWidth: 0, height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <AppBar
+          position="static"
+          color="transparent"
+          elevation={0}
+          sx={{ flexShrink: 0, bgcolor: alpha(theme.palette.background.paper, 0.84), backdropFilter: 'blur(16px)', borderBottom: '1px solid', borderColor: 'divider' }}
+        >
+          <Toolbar sx={{ minHeight: { xs: 62, md: 70 }, px: { xs: 1.5, sm: 2.5, lg: 3.5 } }}>
+            <IconButton onClick={() => setMobileOpen(true)} sx={{ mr: 1, display: { md: 'none' } }} aria-label="Abrir menú">
               <MenuIcon />
             </IconButton>
-            <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 800, color: '#0f172a' }}>
-              {menuItems.find(i => i.path === location.pathname)?.text || 'Panel'}
-            </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <Box sx={{ textAlign: 'right', display: { xs: 'none', sm: 'block' } }}>
-                <Typography variant="body2" sx={{ fontWeight: 800 }}>{user?.username}</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 700 }}>{user?.role}</Typography>
-              </Box>
+            <Box sx={{ minWidth: 0, flex: 1 }}>
+              <Typography variant="h6" noWrap sx={{ fontSize: { xs: 16, sm: 18 } }}>{activeItem?.text || 'Panel'}</Typography>
+              <Typography variant="caption" color="text.secondary" noWrap sx={{ display: { xs: 'none', sm: 'block' } }}>
+                Administra tu operación de WhatsApp
+              </Typography>
+            </Box>
+            <Stack direction="row" spacing={{ xs: 0.5, sm: 1 }} alignItems="center">
+              <Tooltip title={mode === 'dark' ? 'Usar tema claro' : 'Usar tema oscuro'}>
+                <IconButton onClick={toggleMode} aria-label="Cambiar tema" sx={{ border: '1px solid', borderColor: 'divider' }}>
+                  {mode === 'dark' ? <LightMode /> : <DarkMode />}
+                </IconButton>
+              </Tooltip>
               <Tooltip title="Cuenta">
-                <IconButton onClick={handleMenu} size="small" sx={{ border: '2px solid white', boxShadow: '0 0 0 2px #e2e8f0' }}>
-                  <Avatar sx={{ width: 36, height: 36, bgcolor: isPlanExpired ? '#ef4444' : '#0ea5e9' }}>
+                <IconButton onClick={(event) => setAnchorEl(event.currentTarget)} size="small" sx={{ ml: 0.5 }}>
+                  <Avatar sx={{ width: 38, height: 38, bgcolor: isPlanExpired ? 'error.main' : 'primary.main', fontWeight: 800 }}>
                     {(user?.username?.[0] || 'U').toUpperCase()}
                   </Avatar>
                 </IconButton>
               </Tooltip>
-              <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleClose}>
-                <MenuItem onClick={handleLogout}><Logout sx={{ mr: 1, fontSize: 20 }} /> Cerrar Sesión</MenuItem>
-              </Menu>
-            </Box>
+            </Stack>
+            <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}>
+              <Box sx={{ px: 2, py: 1, minWidth: 190 }}>
+                <Typography variant="body2" sx={{ fontWeight: 800 }}>{user?.username}</Typography>
+                <Typography variant="caption" color="text.secondary">{user?.role}</Typography>
+              </Box>
+              <Divider />
+              <MenuItem onClick={() => { setAnchorEl(null); logout(); }}><Logout sx={{ mr: 1.25, fontSize: 20 }} /> Cerrar sesión</MenuItem>
+            </Menu>
           </Toolbar>
         </AppBar>
 
-        <Container maxWidth="xl" sx={{ mt: 4, mb: 8, flexGrow: 1 }}>
-          {isPlanExpired && (
-            <Paper sx={{ p: 2, mb: 4, bgcolor: '#fee2e2', border: '1px solid #ef4444', borderRadius: 2 }}>
-              <Typography color="error" variant="body1" sx={{ fontWeight: 'bold' }}>
-                ⚠️ Tu suscripción ha vencido. Por favor contacta a soporte para renovar.
-              </Typography>
-            </Paper>
-          )}
-          
-          <Routes>
-            <Route path="/" element={<DashboardHome user={user} />} />
-            <Route path="/docs" element={
-              <Box>
-                <ApiKeyDisplay />
-                <Paper sx={{ p: 3, mb: 2, borderRadius: 2, bgcolor: 'white', border: '1px solid #e2e8f0' }}>
-                  <Typography variant="h6" sx={{ fontWeight: 800, color: '#0f172a' }}>Consola Interactiva</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Selecciona un tipo de petición en la izquierda, modifica el cuerpo JSON y presiona "Run" para probar.
-                  </Typography>
-                </Paper>
-                <ApiConsole mode="private" userToken={localStorage.getItem('token')} />
-              </Box>
-            } />
-            <Route path="/users" element={user?.role === 'admin' ? <Users /> : <Navigate to="/dashboard" />} />
-          </Routes>
-        </Container>
+        <Box component="main" sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain' }}>
+          <Container
+            maxWidth={workspace ? false : 'xl'}
+            disableGutters={workspace}
+            sx={{
+              minHeight: '100%',
+              px: workspace ? 0 : { xs: 2, sm: 2.5, lg: 3.5 },
+              py: workspace ? 0 : { xs: 2.5, md: 3.5 },
+            }}
+          >
+            {isPlanExpired && (
+              <Alert severity="error" sx={{ mb: workspace ? 0 : 3, borderRadius: workspace ? 0 : 2 }}>
+                Tu suscripción venció. Contacta a soporte para renovarla y reactivar la automatización.
+              </Alert>
+            )}
+            <Routes>
+              <Route path="/" element={<DashboardHome user={user} onNavigate={goTo} />} />
+              <Route path="/docs" element={(
+                <Box>
+                  <PageIntro eyebrow="Desarrolladores" title="Documentación y consola" description="Prueba los endpoints con tu sesión y copia las credenciales que necesita tu integración." />
+                  <ApiKeyDisplay />
+                  <Paper variant="outlined" sx={{ p: { xs: 2, md: 2.5 }, mb: 2 }}>
+                    <Typography variant="h6">Consola interactiva</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                      Elige una petición, adapta el cuerpo JSON y ejecuta una prueba controlada.
+                    </Typography>
+                  </Paper>
+                  <ApiConsole mode="private" userToken={localStorage.getItem('token')} />
+                </Box>
+              )} />
+              <Route path="/users" element={user?.role === 'admin' ? <Users /> : <Navigate to="/dashboard" />} />
+              <Route path="/crm" element={hasCrm ? <CrmInbox /> : <Navigate to="/dashboard" />} />
+              <Route path="/campaigns" element={hasCrm ? <Campaigns /> : <Navigate to="/dashboard" />} />
+              <Route path="/ai/:sessionId" element={hasCrm ? <AiCrmConfigPage /> : <Navigate to="/dashboard" />} />
+            </Routes>
+          </Container>
+        </Box>
       </Box>
     </Box>
   );

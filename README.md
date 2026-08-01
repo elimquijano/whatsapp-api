@@ -5,12 +5,13 @@ Este proyecto es una plataforma completa para gestionar múltiples sesiones de W
 ## Características
 - **Multi-Sesión:** Cada usuario puede conectar su propio WhatsApp.
 - **Autenticación:** Sistema de usuarios con roles y privilegios (Admin/User) y tokens JWT.
-- **Base de Datos:** Persistencia de usuarios y roles en MySQL mediante Sequelize.
+- **Base de Datos:** Persistencia de usuarios, sesiones, webhooks, conversaciones y workflows IA CRM en MySQL mediante Sequelize.
+- **IA CRM (Profesional):** Respuesta manual/automática por chat, memoria de 20 mensajes, bandeja estilo WhatsApp Web, clasificación comercial, campañas, importación HTTP y constructor visual de workflows.
 - **Dashboard:** Interfaz moderna para ver el estado de conexión, escanear el QR y enviar mensajes.
 - **Logs:** Sistema de logging profesional con `pino`.
 
 ## Requisitos
-- Node.js v18+
+- Node.js v20+
 - MySQL Server
 - Un teléfono con WhatsApp para escanear el QR.
 
@@ -37,6 +38,7 @@ Este proyecto es una plataforma completa para gestionar múltiples sesiones de W
    DB_PASSWORD=tu_password
    DB_NAME=whatsapp_sessions_db
    JWT_SECRET=una_clave_secreta_muy_segura
+   AI_CREDENTIALS_SECRET=otra_clave_larga_para_cifrar_tokens
    ```
 
 4. **Crear la base de datos en MySQL:**
@@ -74,3 +76,15 @@ Este proyecto es una plataforma completa para gestionar múltiples sesiones de W
 - `GET /api/whatsapp/status`: Obtiene el estado y el código QR.
 - `POST /api/whatsapp/send-text`: Envía un mensaje desde la sesión del usuario.
 - `POST /api/whatsapp/logout`: Desconecta WhatsApp del usuario.
+- `GET /api/ai/sessions/:sessionId/config`: Obtiene agente, modelo, permisos y grafo de nodos de una sesión Profesional.
+- `PUT /api/ai/sessions/:sessionId/config`: Guarda la configuración completa y sus credenciales cifradas.
+- `PUT /api/ai/sessions/:sessionId/toggle`: Cambia entre atención manual y respuesta automática.
+- `POST /api/ai/sessions/:sessionId/presets/sales`: Aplica una plantilla inicial de ventas generales.
+- `GET /api/ai/sessions/:sessionId/messages`: Consulta las conversaciones persistidas en BD.
+- `GET /api/crm/sessions/:sessionId/contacts`: Lista y prioriza los contactos de una sesión.
+- `PUT /api/crm/contacts/:contactId`: Cambia clasificación, prioridad, notas, etiquetas o atención humana/IA.
+- `POST /api/crm/contacts/:contactId/messages`: Envía una respuesta manual y toma únicamente ese chat.
+- `POST /api/crm/sessions/:sessionId/import-sources`: Guarda una integración HTTP para importar clientes.
+- `POST /api/crm/import-sources/:sourceId/run`: Ejecuta la importación y actualiza clientes.
+- `GET|POST /api/crm/campaigns`: Consulta o crea campañas segmentadas.
+- `POST /api/crm/campaigns/:campaignId/run`: Inicia una campaña de difusión.

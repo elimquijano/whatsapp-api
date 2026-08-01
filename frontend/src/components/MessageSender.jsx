@@ -64,12 +64,15 @@ const MessageSender = () => {
   };
 
   return (
-    <Paper elevation={3} sx={{ p: 4, borderRadius: 3, mt: 4 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-        <Message sx={{ color: '#1976d2', mr: 2, fontSize: 32 }} />
-        <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
-          Enviar Mensaje Directo
-        </Typography>
+    <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, overflow: 'hidden' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2.5 }}>
+        <Box sx={{ width: 40, height: 40, borderRadius: 2.5, display: 'grid', placeItems: 'center', bgcolor: 'primary.main', color: 'primary.contrastText', flexShrink: 0 }}>
+          <Message sx={{ fontSize: 22 }} />
+        </Box>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="h6">Mensaje directo</Typography>
+          <Typography variant="caption" color="text.secondary">Envía una respuesta puntual sin abrir el CRM</Typography>
+        </Box>
       </Box>
 
       {success && <Alert severity="success" sx={{ mb: 3 }}>{success}</Alert>}
@@ -142,7 +145,7 @@ const MessageSender = () => {
           fullWidth
           disabled={loading || sessions.length === 0}
           startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <Send />}
-          sx={{ py: 1.5, fontSize: '1.1rem', borderRadius: 10 }}
+          sx={{ py: 1.25 }}
         >
           {loading ? 'Enviando...' : sessions.length === 0 ? 'Conecta un número primero' : 'Enviar Mensaje'}
         </Button>

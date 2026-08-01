@@ -47,9 +47,20 @@ const User = sequelize.define("User", {
     allowNull: true,
     unique: true,
     },
-    webhookUrl: {
+  webhookUrl: {
     type: DataTypes.STRING,
     allowNull: true,
+  },
+  sessionWebhooks: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    get() {
+      const rawValue = this.getDataValue("sessionWebhooks");
+      try { return rawValue ? JSON.parse(rawValue) : {}; } catch { return {}; }
+    },
+    set(value) {
+      this.setDataValue("sessionWebhooks", JSON.stringify(value || {}));
+    },
   },
 }, {
   hooks: {

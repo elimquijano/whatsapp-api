@@ -8,13 +8,14 @@ import {
   Send, ContentCopy, Folder, ArrowBack, Terminal
 } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
+import { apiUrl } from '../utils/apiUrl';
 import { useNavigate } from 'react-router-dom';
 
 const Documentation = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [selectedMethod, setSelectedMethod] = useState('POST');
-  const [url, setUrl] = useState(window.location.origin + '/api/v1/messages/text');
+  const [url, setUrl] = useState(apiUrl('/api/v1/messages/text'));
   const [activeTab, setActiveTab] = useState(0);
   const [response, setResponse] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -110,7 +111,7 @@ const Documentation = () => {
 
   const handleEndpointSelect = (ep) => {
     setSelectedMethod(ep.method);
-    setUrl(window.location.origin + ep.path);
+    setUrl(apiUrl(ep.path));
     setBody(ep.method === 'GET' ? '' : JSON.stringify(ep.body || {}, null, 2));
     setResponse(null);
   };
@@ -133,7 +134,7 @@ const Documentation = () => {
       };
       if (selectedMethod !== 'GET') options.body = body;
 
-      const res = await fetch(url.replace(window.location.origin, ''), options);
+      const res = await fetch(url, options);
       const data = await res.json();
       setResponse({ status: res.status, statusText: res.statusText, data, time: Date.now() - start });
     } catch (err) {

@@ -10,6 +10,7 @@ import {
   CheckCircle, Error as ErrorIcon, Wifi,
   FolderOpen, InsertDriveFile, Image, Audiotrack
 } from '@mui/icons-material';
+import { API_HOST, apiUrl } from '../utils/apiUrl';
 
 const ApiConsole = ({ mode = 'public', userToken = null }) => {
   const theme = useTheme();
@@ -21,6 +22,7 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
   // Initial State
   const [endpoint, setEndpoint] = useState('/api/v1/messages/text');
   const [body, setBody] = useState('');
+  const requestUrl = apiUrl(endpoint);
 
   const collections = [
     {
@@ -119,7 +121,7 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
     // Actual API Call
     try {
       const startTime = Date.now();
-      const res = await fetch(endpoint, {
+      const res = await fetch(requestUrl, {
         method: method,
         headers: {
           'Content-Type': 'application/json',
@@ -148,9 +150,11 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
     <Paper 
       elevation={0} 
       sx={{ 
-        display: 'flex', 
+        display: 'flex',
+        flexDirection: { xs: 'column', md: 'row' },
         width: '100%', 
-        height: 600, 
+        height: { xs: 'auto', md: 600 },
+        minHeight: { xs: 720, md: 600 },
         bgcolor: '#0f172a', // Slate 900
         color: '#e2e8f0',
         borderRadius: 2,
@@ -161,16 +165,18 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
     >
       {/* Sidebar (Collections) */}
       <Box sx={{ 
-        width: 220, 
-        borderRight: '1px solid #334155', 
+        width: { xs: '100%', md: 220 },
+        flexShrink: 0,
+        borderRight: { xs: 0, md: '1px solid #334155' },
+        borderBottom: { xs: '1px solid #334155', md: 0 },
         bgcolor: '#0b1120', 
         display: 'flex', 
         flexDirection: 'column' 
       }}>
-        <Box sx={{ p: 2, borderBottom: '1px solid #334155' }}>
+        <Box sx={{ p: 2, borderBottom: '1px solid #334155', display: { xs: 'none', md: 'block' } }}>
           <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 800, letterSpacing: 1 }}>COLLECTIONS</Typography>
         </Box>
-        <List sx={{ pt: 0 }}>
+        <List sx={{ p: { xs: 1, md: 0 }, display: { xs: 'flex', md: 'block' }, gap: { xs: 0.75, md: 0 }, overflowX: { xs: 'auto', md: 'visible' } }}>
           {collections.map((item, index) => (
             <ListItemButton 
               key={index} 
@@ -178,6 +184,8 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
               selected={JSON.stringify(item.body, null, 2) === body}
               sx={{ 
                 py: 1, 
+                minWidth: { xs: 'max-content', md: 0 },
+                borderRadius: { xs: 1.5, md: 0 },
                 '&.Mui-selected': { bgcolor: 'rgba(56, 189, 248, 0.1)', borderLeft: '3px solid #38bdf8' },
                 '&:hover': { bgcolor: 'rgba(255,255,255,0.05)' }
               }}
@@ -195,7 +203,7 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
       </Box>
 
       {/* Main Area */}
-      <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+      <Box sx={{ flexGrow: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         
         {/* Window Header (Mac Style) */}
         <Box sx={{ 
@@ -218,7 +226,7 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
             textAlign: 'center',
             opacity: 0.7
           }}>
-            api.wa-pro.com — bash — 80x24
+            {API_HOST} — API console
           </Typography>
         </Box>
 
@@ -227,7 +235,8 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
           display: 'flex', 
           alignItems: 'center', 
           p: 2, 
-          gap: 2,
+          gap: 1.5,
+          flexWrap: { xs: 'wrap', sm: 'nowrap' },
           bgcolor: '#0f172a'
         }}>
           <Box sx={{ 
@@ -242,11 +251,16 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
           </Box>
           <Typography sx={{ 
             flexGrow: 1, 
+            minWidth: 0,
+            width: { xs: 'calc(100% - 72px)', sm: 'auto' },
             fontFamily: 'monospace', 
             fontSize: '0.9rem', 
-            color: '#cbd5e1' 
+            color: '#cbd5e1',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
           }}>
-            https://api.wa-pro.com{endpoint}
+            {requestUrl}
           </Typography>
           <Button 
             variant="contained" 
@@ -266,7 +280,7 @@ const ApiConsole = ({ mode = 'public', userToken = null }) => {
         </Box>
 
         {/* Editor Area */}
-        <Box sx={{ display: 'flex', flexGrow: 1, minHeight: 0 }}>
+        <Box sx={{ display: 'flex', flexGrow: 1, minHeight: { xs: 480, md: 0 } }}>
           {/* Sidebar Tabs */}
           <Box sx={{ 
             width: 50, 

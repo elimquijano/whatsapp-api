@@ -2,6 +2,7 @@ import User from "../models/User.js";
 import Role from "../models/Role.js";
 import Plan from "../models/Plan.js";
 import crypto from "crypto";
+import WhatsAppSession from "../models/WhatsAppSession.js";
 
 export const getProfile = async (req, res) => {
   try {
@@ -31,19 +32,32 @@ export const getProfile = async (req, res) => {
 
 export const updateWebhook = async (req, res) => {
   try {
-    const { webhookUrl } = req.body;
+    const { webhookUrl, sessionId } = req.body;
+    if (!sessionId) {
+      return res.status(400).json({ success: false, error: "Debes indicar la sesión de WhatsApp" });
+    }
     // Basic validation
     if (webhookUrl && !webhookUrl.startsWith('http')) {
       return res.status(400).json({ success: false, error: "URL inválida. Debe comenzar con http:// o https://" });
     }
 
-    const user = await User.findByPk(req.user.id);
+    const user = await User.findByPk(req.user.id, { include: [{ model: Plan, as: 'planData' }] });
     if (!user) return res.status(404).json({ success: false, error: "Usuario no encontrado" });
+    if (!user.planData?.features?.includes('webhook')) {
+      return res.status(403).json({ success: false, error: "Tu plan no incluye webhooks" });
+    }
+    if (!sessionManager.getSession(user.id, sessionId)) {
+      return res.status(404).json({ success: false, error: "La sesión indicada no existe" });
+    }
 
-    user.webhookUrl = webhookUrl;
-    await user.save();
+    const sessionRecord = await WhatsAppSession.findOne({ where: { userId: user.id, sessionId } });
+    if (!sessionRecord) {
+      return res.status(404).json({ success: false, error: "La sesión no está registrada" });
+    }
+    sessionRecord.webhookUrl = webhookUrl || null;
+    await sessionRecord.save();
 
-    res.json({ success: true, message: "Webhook actualizado correctamente", webhookUrl });
+    res.json({ success: true, message: "Webhook de la sesión actualizado correctamente", sessionId, webhookUrl });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

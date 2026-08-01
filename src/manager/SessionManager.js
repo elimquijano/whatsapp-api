@@ -1,8 +1,9 @@
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
-  fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  Browsers,
+  fetchLatestWaWebVersion,
 } from "@whiskeysockets/baileys";
 
 import fs from "fs";
@@ -11,35 +12,106 @@ import { fileURLToPath } from "url";
 import pino from "pino";
 import QRCode from "qrcode";
 import User from "../models/User.js";
+import WhatsAppSession from "../models/WhatsAppSession.js";
+import aiCrmService from "../services/aiCrmService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const VERSION_CACHE_TTL_MS = 30 * 60 * 1000;
+const LAST_KNOWN_WA_VERSION = [2, 3000, 1044015310];
+
+const parseWaVersion = (value) => {
+  if (Array.isArray(value) && value.length === 3) {
+    const parsed = value.map(Number);
+    return parsed.every(Number.isInteger) ? parsed : null;
+  }
+
+  if (typeof value !== "string") return null;
+  const parsed = value.split(/[.,]/).map(part => Number(part.trim()));
+  return parsed.length === 3 && parsed.every(Number.isInteger) ? parsed : null;
+};
 
 class SessionManager {
   constructor() {
     this.sessions = new Map(); // userId (string) -> Map(sessionId -> sessionData)
+    this.connectionPromises = new Map();
+    this.reconnectTimers = new Map();
+    this.reconnectAttempts = new Map();
+    this.sessionGenerations = new Map();
+    this.waVersionCache = null;
     this.logger = pino({
       level: "info",
       transport: { target: "pino-pretty", options: { colorize: true } },
     });
   }
 
+  async resolveWaWebVersion({ force = false } = {}) {
+    const configuredVersion = parseWaVersion(process.env.WA_WEB_VERSION);
+    if (configuredVersion) {
+      return { version: configuredVersion, source: "WA_WEB_VERSION" };
+    }
+
+    if (!force && this.waVersionCache && Date.now() - this.waVersionCache.fetchedAt < VERSION_CACHE_TTL_MS) {
+      return this.waVersionCache;
+    }
+
+    try {
+      const result = await fetchLatestWaWebVersion();
+      const version = parseWaVersion(result?.version);
+      if (!result?.isLatest || !version) {
+        throw result?.error || new Error("WhatsApp Web no devolvió una versión válida");
+      }
+
+      this.waVersionCache = { version, source: "web.whatsapp.com", fetchedAt: Date.now() };
+    } catch (error) {
+      const previousVersion = parseWaVersion(this.waVersionCache?.version);
+      this.waVersionCache = {
+        version: previousVersion || LAST_KNOWN_WA_VERSION,
+        source: previousVersion ? "memory-cache" : "last-known",
+        fetchedAt: Date.now(),
+      };
+      this.logger.warn({ error: error.message, version: this.waVersionCache.version }, "No se pudo consultar la versión de WhatsApp Web; usando respaldo");
+    }
+
+    return this.waVersionCache;
+  }
+
   async createSession(rawUserId, sessionId) {
     const userId = String(rawUserId); // Normalizar a string
-    
     if (!this.sessions.has(userId)) {
       this.sessions.set(userId, new Map());
     }
 
     const userSessions = this.sessions.get(userId);
+    const sessionKey = `${userId}:${sessionId}`;
 
     // Evitar duplicados para este sessionId específico
     if (userSessions.has(sessionId)) {
       const sess = userSessions.get(sessionId);
-      if (['open', 'connecting', 'waiting_qr'].includes(sess.status)) {
+      if (["open", "connecting", "waiting_qr", "reconnecting"].includes(sess.status)) {
         return sess;
       }
     }
+
+    if (this.connectionPromises.has(sessionKey)) {
+      return this.connectionPromises.get(sessionKey);
+    }
+
+    const connectionPromise = this.initializeSession(userId, sessionId, userSessions, sessionKey)
+      .finally(() => {
+        if (this.connectionPromises.get(sessionKey) === connectionPromise) {
+          this.connectionPromises.delete(sessionKey);
+        }
+      });
+    this.connectionPromises.set(sessionKey, connectionPromise);
+    return connectionPromise;
+  }
+
+  async initializeSession(userId, sessionId, userSessions, sessionKey) {
+    await WhatsAppSession.findOrCreate({ where: { userId, sessionId } });
+    this.clearReconnectTimer(sessionKey);
+    const generation = (this.sessionGenerations.get(sessionKey) || 0) + 1;
+    this.sessionGenerations.set(sessionKey, generation);
 
     const sessionDir = path.join(__dirname, "../../sessions", `auth_${userId}_${sessionId}`);
     try {
@@ -52,17 +124,19 @@ class SessionManager {
 
     try {
       const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-      const { version } = await fetchLatestBaileysVersion();
+      const waVersion = await this.resolveWaWebVersion();
+
+      this.logger.info({ version: waVersion.version, source: waVersion.source }, "Versión de WhatsApp Web seleccionada");
 
       const sock = makeWASocket({
-        version,
         auth: {
           creds: state.creds,
           keys: makeCacheableSignalKeyStore(state.keys, this.logger),
         },
         logger: this.logger,
         printQRInTerminal: false,
-        browser: ["WA-SAAS", "Chrome", "1.0.0"],
+        browser: Browsers.windows("Chrome"),
+        version: waVersion.version,
       });
 
       const sessionData = {
@@ -70,45 +144,79 @@ class SessionManager {
         qrDataUrl: null,
         status: "connecting",
         userId,
-        sessionId
+        sessionId,
+        generation,
+        reconnectAttempt: this.reconnectAttempts.get(sessionKey) || 0,
+        lastDisconnect: null,
       };
 
       userSessions.set(sessionId, sessionData);
+      const isCurrentSession = () => (
+        userSessions.get(sessionId) === sessionData
+        && this.sessionGenerations.get(sessionKey) === generation
+      );
 
       sock.ev.on("connection.update", async (update) => {
-        const { connection, lastDisconnect, qr } = update;
+        try {
+          const { connection, lastDisconnect, qr } = update;
 
-        if (qr) {
-          sessionData.status = "waiting_qr";
-          sessionData.qrDataUrl = await QRCode.toDataURL(qr);
-        }
+          // Los eventos de un socket reemplazado nunca deben alterar al socket vigente.
+          if (!isCurrentSession()) return;
 
-        if (connection === "close") {
-          const statusCode = lastDisconnect?.error?.output?.statusCode;
-          const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-          
-          sessionData.status = "closed";
-          sessionData.qrDataUrl = null;
-
-          if (shouldReconnect) {
-            this.createSession(userId, sessionId);
-          } else {
-            userSessions.delete(sessionId);
+          if (qr) {
+            const qrDataUrl = await QRCode.toDataURL(qr);
+            if (!isCurrentSession()) return;
+            sessionData.status = "waiting_qr";
+            sessionData.qrDataUrl = qrDataUrl;
+            sessionData.lastDisconnect = null;
           }
-        } else if (connection === "open") {
-          sessionData.status = "open";
-          sessionData.qrDataUrl = null;
-          this.logger.info(`✅ Conectado: Usuario ${userId}, Sesión ${sessionId}`);
+
+          if (connection === "close") {
+            const disconnect = this.describeDisconnect(lastDisconnect?.error);
+            sessionData.status = "closed";
+            sessionData.qrDataUrl = null;
+            sessionData.lastDisconnect = disconnect;
+
+            this.logger.warn({
+              userId,
+              sessionId,
+              statusCode: disconnect.statusCode,
+              reason: disconnect.reason,
+              location: disconnect.location,
+              error: disconnect.message,
+            }, "Conexión de WhatsApp cerrada");
+
+            if (this.shouldReconnect(disconnect)) {
+              this.scheduleReconnect(userId, sessionId, sessionData, sessionKey);
+            } else {
+              if (disconnect.statusCode === 405) this.waVersionCache = null;
+              sessionData.status = disconnect.statusCode === DisconnectReason.loggedOut ? "logged_out" : "error";
+              this.reconnectAttempts.delete(sessionKey);
+            }
+          } else if (connection === "open") {
+            this.clearReconnectTimer(sessionKey);
+            this.reconnectAttempts.delete(sessionKey);
+            sessionData.status = "open";
+            sessionData.qrDataUrl = null;
+            sessionData.reconnectAttempt = 0;
+            sessionData.lastDisconnect = null;
+            this.logger.info(`✅ Conectado: Usuario ${userId}, Sesión ${sessionId}`);
+          }
+        } catch (error) {
+          this.logger.error({ userId, sessionId, error: error.message }, "Error manejando estado de conexión");
         }
       });
 
       // WEBHOOK HANDLING
       sock.ev.on("messages.upsert", async ({ messages, type }) => {
         try {
+          if (!isCurrentSession()) return;
           if (type !== 'notify') return;
           
           const user = await User.findByPk(userId);
-          if (!user || !user.webhookUrl) return;
+          const sessionRecord = await WhatsAppSession.findOne({ where: { userId, sessionId } });
+          const webhookUrl = sessionRecord?.webhookUrl || user?.sessionWebhooks?.[sessionId] || user?.webhookUrl;
+          if (!user) return;
 
           // Verificar expiración del plan
           if (user.expirationDate && new Date() > new Date(user.expirationDate)) {
@@ -118,6 +226,11 @@ class SessionManager {
 
           for (const msg of messages) {
             if (!msg.message) continue;
+
+            // messages.upsert también contiene eventos internos de Baileys.
+            // Solo los mensajes con contenido real llegan a BD, IA o webhook.
+            const extractedMessage = aiCrmService.extractMessage(msg);
+            if (!extractedMessage || !extractedMessage.content) continue;
 
             const remoteJid = msg.key.remoteJid;
             const participant = msg.key.participant;
@@ -153,7 +266,7 @@ class SessionManager {
 
             // Prepare payload
             const payload = {
-              event: 'message.received',
+              event: msg.key.fromMe ? 'message.sent' : 'message.received',
               instanceId: sessionId,
               data: {
                 id: msg.key.id,
@@ -167,24 +280,151 @@ class SessionManager {
               }
             };
 
-            // Send to webhook
-            fetch(user.webhookUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            }).catch(err => this.logger.error(`Webhook error for user ${userId}:`, err.message));
+            // IA CRM directa: guarda todos los mensajes en BD y responde solo si
+            // el switch automático de esta sesión está activado.
+            await aiCrmService
+              .handleMessage({ userId, sessionId, sock, msg, senderNumber })
+              .catch(err => this.logger.error(`IA CRM error for session ${sessionId}: ${err.message}`));
+
+            // El webhook comercial anterior sigue disponible e independiente.
+            if (webhookUrl) {
+              fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              }).catch(err => this.logger.error(`Webhook error for user ${userId}:`, err.message));
+            }
           }
         } catch (error) {
           this.logger.error("Error processing webhook:", error);
         }
       });
 
-      sock.ev.on("creds.update", saveCreds);
+      sock.ev.on("creds.update", async () => {
+        if (!isCurrentSession()) return;
+        try {
+          await saveCreds();
+        } catch (error) {
+          this.logger.error({ userId, sessionId, error: error.message }, "Error guardando credenciales de WhatsApp");
+        }
+      });
       return sessionData;
     } catch (err) {
       this.logger.error("Error en createSession:", err);
       throw err;
     }
+  }
+
+  describeDisconnect(error) {
+    const statusCode = Number(error?.output?.statusCode ?? error?.statusCode ?? 0) || null;
+    const data = error?.data || error?.output?.payload || {};
+    return {
+      statusCode,
+      message: String(error?.message || "Conexión cerrada sin detalle").slice(0, 500),
+      reason: data?.reason || data?.attrs?.reason || null,
+      location: data?.location || data?.attrs?.location || null,
+    };
+  }
+
+  shouldReconnect(disconnect) {
+    const nonRetryableCodes = new Set([
+      DisconnectReason.loggedOut,
+      DisconnectReason.forbidden,
+      DisconnectReason.badSession,
+      DisconnectReason.multideviceMismatch,
+      DisconnectReason.connectionReplaced,
+      405,
+    ]);
+    if (nonRetryableCodes.has(disconnect.statusCode)) return false;
+    if (/certificate|unable to verify|self[- ]signed/i.test(disconnect.message)) return false;
+    return true;
+  }
+
+  scheduleReconnect(userId, sessionId, sessionData, sessionKey) {
+    if (this.reconnectTimers.has(sessionKey)) return;
+    const attempt = (this.reconnectAttempts.get(sessionKey) || 0) + 1;
+    const maxAttempts = 6;
+    if (attempt > maxAttempts) {
+      sessionData.status = "error";
+      sessionData.reconnectAttempt = maxAttempts;
+      this.logger.error({ userId, sessionId, maxAttempts }, "Reconexión detenida tras alcanzar el límite de intentos");
+      return;
+    }
+
+    this.reconnectAttempts.set(sessionKey, attempt);
+    sessionData.status = "reconnecting";
+    sessionData.reconnectAttempt = attempt;
+    const delayMs = Math.min(30000, 1000 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 500);
+    this.logger.warn({ userId, sessionId, attempt, delayMs }, "Reconexión de WhatsApp programada");
+
+    const timer = setTimeout(async () => {
+      this.reconnectTimers.delete(sessionKey);
+      const current = this.sessions.get(userId)?.get(sessionId);
+      if (current !== sessionData) return;
+      try {
+        this.sessions.get(userId)?.delete(sessionId);
+        await this.createSession(userId, sessionId);
+      } catch (error) {
+        const disconnect = this.describeDisconnect(error);
+        sessionData.lastDisconnect = disconnect;
+        if (this.shouldReconnect(disconnect)) {
+          this.scheduleReconnect(userId, sessionId, sessionData, sessionKey);
+        } else {
+          sessionData.status = "error";
+        }
+      }
+    }, delayMs);
+    timer.unref?.();
+    this.reconnectTimers.set(sessionKey, timer);
+  }
+
+  clearReconnectTimer(sessionKey) {
+    const timer = this.reconnectTimers.get(sessionKey);
+    if (timer) clearTimeout(timer);
+    this.reconnectTimers.delete(sessionKey);
+  }
+
+  archiveAuthDirectory(userId, sessionId, label = "disconnected") {
+    const projectRoot = path.resolve(__dirname, "../..");
+    const sessionsRoot = path.join(projectRoot, "sessions");
+    const backupRoot = path.join(projectRoot, "session-backups");
+    const source = path.join(sessionsRoot, `auth_${userId}_${sessionId}`);
+    if (!fs.existsSync(source)) return null;
+    fs.mkdirSync(backupRoot, { recursive: true });
+    const safeLabel = String(label).replace(/[^a-z0-9_-]/gi, "_");
+    const destination = path.join(backupRoot, `${safeLabel}_${userId}_${sessionId}_${Date.now()}`);
+    fs.renameSync(source, destination);
+    return destination;
+  }
+
+  async disconnectSession(rawUserId, sessionId, { logout = true, archiveAuth = true } = {}) {
+    const userId = String(rawUserId);
+    const sessionKey = `${userId}:${sessionId}`;
+    this.clearReconnectTimer(sessionKey);
+    this.reconnectAttempts.delete(sessionKey);
+    this.sessionGenerations.set(sessionKey, (this.sessionGenerations.get(sessionKey) || 0) + 1);
+    const userSessions = this.sessions.get(userId);
+    const session = userSessions?.get(sessionId);
+    userSessions?.delete(sessionId);
+
+    if (session?.sock) {
+      try {
+        if (logout && session.status === "open") await session.sock.logout();
+        else session.sock.end();
+      } catch (error) {
+        this.logger.warn({ userId, sessionId, error: error.message }, "No se pudo cerrar el socket limpiamente");
+        try { session.sock.end(); } catch { /* ya estaba cerrado */ }
+      }
+    }
+
+    const backupPath = archiveAuth ? this.archiveAuthDirectory(userId, sessionId, logout ? "logout" : "relink") : null;
+    return { sessionId, status: "disconnected", backupPath };
+  }
+
+  async resetSessionAuth(rawUserId, sessionId) {
+    const userId = String(rawUserId);
+    await this.disconnectSession(userId, sessionId, { logout: false, archiveAuth: true });
+    return this.createSession(userId, sessionId);
   }
 
   getSession(rawUserId, sessionId) {
@@ -199,13 +439,7 @@ class SessionManager {
   }
 
   async deleteSession(rawUserId, sessionId) {
-    const userId = String(rawUserId);
-    const userSessions = this.sessions.get(userId);
-    if (userSessions && userSessions.has(sessionId)) {
-      const session = userSessions.get(sessionId);
-      try { await session.sock.logout(); } catch (e) {}
-      userSessions.delete(sessionId);
-    }
+    return this.disconnectSession(rawUserId, sessionId, { logout: true, archiveAuth: true });
   }
 
   async cleanupExpiredSessions() {
@@ -216,8 +450,12 @@ class SessionManager {
         if (user && user.expirationDate && new Date() > new Date(user.expirationDate)) {
           this.logger.warn(`⛔ Usuario ${userId} expirado. Cerrando ${userSessions.size} sesiones.`);
           for (const [sessionId, session] of userSessions.entries()) {
-            try { await session.sock.logout(); } catch (e) {}
+            const sessionKey = `${userId}:${sessionId}`;
+            this.clearReconnectTimer(sessionKey);
+            this.reconnectAttempts.delete(sessionKey);
+            this.sessionGenerations.set(sessionKey, (this.sessionGenerations.get(sessionKey) || 0) + 1);
             userSessions.delete(sessionId);
+            try { await session.sock.logout(); } catch (e) {}
           }
           this.sessions.delete(userId);
         }

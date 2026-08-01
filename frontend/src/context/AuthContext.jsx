@@ -1,8 +1,9 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import axios from 'axios';
+import { API_BASE_URL } from '../utils/apiUrl';
 
-// Si existe VITE_API_URL en .env úsala, de lo contrario deja que el proxy de Vite maneje '/'
-axios.defaults.baseURL = import.meta.env.VITE_API_URL || '/';
+// Usa la misma base que muestran la documentación y la consola interactiva.
+axios.defaults.baseURL = API_BASE_URL;
 
 const AuthContext = createContext();
 

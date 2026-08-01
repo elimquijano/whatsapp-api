@@ -148,9 +148,9 @@ const Users = () => {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
+      <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, justifyContent: 'space-between', alignItems: { xs: 'stretch', sm: 'center' }, gap: 2, mb: { xs: 2.5, md: 4 } }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 800, color: '#1e293b' }}>
+          <Typography variant="h4" sx={{ fontSize: { xs: '1.65rem', md: '2rem' } }}>
             Gestión de Usuarios
           </Typography>
           <Typography variant="body1" color="text.secondary">
@@ -161,7 +161,7 @@ const Users = () => {
           variant="contained"
           startIcon={<Add />}
           onClick={() => handleOpen()}
-          sx={{ borderRadius: 2, px: 3, py: 1, bgcolor: '#0ea5e9', '&:hover': { bgcolor: '#0284c7' } }}
+          sx={{ px: 3 }}
         >
           Nuevo Cliente
         </Button>
@@ -169,8 +169,8 @@ const Users = () => {
 
       {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
 
-      <Card elevation={0} sx={{ borderRadius: 3, overflow: 'hidden', border: '1px solid #e2e8f0' }}>
-        <Box sx={{ p: 2, bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+      <Card sx={{ overflow: 'hidden' }}>
+        <Box sx={{ p: 2, bgcolor: 'surface.soft', borderBottom: '1px solid', borderColor: 'divider' }}>
           <TextField
             placeholder="Buscar por usuario o número..."
             size="small"
@@ -180,16 +180,16 @@ const Users = () => {
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <Search sx={{ color: '#64748b' }} />
+                  <Search sx={{ color: 'text.secondary' }} />
                 </InputAdornment>
               ),
             }}
-            sx={{ maxWidth: 400, bgcolor: 'white', borderRadius: 2 }}
+            sx={{ maxWidth: 420, bgcolor: 'background.paper', borderRadius: 2 }}
           />
         </Box>
         <TableContainer>
           <Table sx={{ minWidth: 650 }}>
-            <TableHead sx={{ bgcolor: '#f1f5f9' }}>
+            <TableHead sx={{ bgcolor: 'surface.soft' }}>
               <TableRow>
                 <TableCell sx={{ fontWeight: 'bold' }}>Usuario</TableCell>
                 <TableCell sx={{ fontWeight: 'bold' }}>WhatsApp</TableCell>
@@ -204,7 +204,7 @@ const Users = () => {
                 <TableRow key={user.id} hover>
                   <TableCell>
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                      <Avatar sx={{ width: 32, height: 32, mr: 1.5, bgcolor: '#e0f2fe', color: '#0ea5e9' }}>
+                      <Avatar sx={{ width: 32, height: 32, mr: 1.5, bgcolor: 'primary.main', color: 'primary.contrastText', fontSize: 14, fontWeight: 800 }}>
                         {(user.username?.[0] || 'U').toUpperCase()}
                       </Avatar>
                       <Typography variant="body2" sx={{ fontWeight: 600 }}>{user.username}</Typography>
