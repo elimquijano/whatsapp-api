@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Alert, Avatar, Box, Button, Chip, CircularProgress, Dialog, DialogActions,
   DialogContent, DialogTitle, Divider, Grid, IconButton, InputAdornment,
@@ -63,7 +63,7 @@ const LinkifiedText = ({ children }) => String(children || '').split(/(https?:\/
     : part
 ));
 
-const MessageContent = ({ item, sessionId, contactId }) => {
+const MessageContent = memo(({ item, sessionId, contactId }) => {
   const [mediaUrl, setMediaUrl] = useState('');
   const [mediaError, setMediaError] = useState(false);
   const type = item.messageType || 'text';
@@ -115,7 +115,27 @@ const MessageContent = ({ item, sessionId, contactId }) => {
   }
 
   return <>{quoted}<Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}><LinkifiedText>{item.content}</LinkifiedText></Typography></>;
-};
+});
+
+const MessageList = memo(({ messages, sessionId, contactId, onReply }) => (
+  <Stack spacing={0.5} sx={{ minHeight: '100%', justifyContent: messages.length ? 'flex-start' : 'center' }}>
+    {!messages.length && <Typography variant="body2" color="text.secondary" textAlign="center">Todavía no hay mensajes en esta conversación.</Typography>}
+    {messages.map((item) => {
+      const outgoing = item.direction === 'outgoing';
+      return (
+        <Box key={item.id} sx={{ alignSelf: outgoing ? 'flex-end' : 'flex-start', maxWidth: { xs: '88%', sm: '78%' }, position: 'relative', '&:hover .reply-action, &:focus-within .reply-action': { opacity: 1 } }}>
+          <Box sx={{ bgcolor: outgoing ? '#d9fdd3' : '#fff', color: '#111b21', px: 1.25, pt: 0.75, pb: 0.5, borderRadius: 1.25, boxShadow: '0 1px 1px rgba(11,20,26,.13)' }}>
+            <MessageContent item={item} sessionId={sessionId} contactId={contactId} />
+            <Typography variant="caption" sx={{ display: 'block', textAlign: 'right', mt: 0.25, color: '#667781', fontSize: 10.5 }}>
+              {new Date(item.messageTimestamp || item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </Typography>
+          </Box>
+          {item.canReply && <Tooltip title="Responder"><IconButton className="reply-action" size="small" onClick={() => onReply(item)} aria-label="Responder a este mensaje" sx={{ position: 'absolute', top: 2, [outgoing ? 'left' : 'right']: -32, opacity: 0, color: '#54656f', transition: 'opacity .1s', '&:focus-visible': { opacity: 1 } }}><Reply sx={{ fontSize: 17 }} /></IconButton></Tooltip>}
+        </Box>
+      );
+    })}
+  </Stack>
+));
 
 const CrmInbox = () => {
   const theme = useTheme();
@@ -369,7 +389,10 @@ const CrmInbox = () => {
     const content = draft;
     if ((!content.trim() && !attachment) || !target?.id) return;
     const contactId = String(target.id);
+    const optimisticId = `pending-${Date.now()}`;
+    setError('');
     setSending(true);
+    setMessages((current) => [...current, { id: optimisticId, direction: 'outgoing', messageType: attachment ? 'document' : 'text', content, createdAt: new Date().toISOString() }]);
     try {
       let media = {};
       if (attachment) {
@@ -384,7 +407,7 @@ const CrmInbox = () => {
             : attachment.type.startsWith('audio/') ? 'audio' : 'document';
         media = { type, payload: dataUrl, filename: attachment.name, mimetype: attachment.type || 'application/octet-stream' };
       }
-      await axios.post(`/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/messages`, {
+      const { data } = await axios.post(`/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/messages`, {
         message: content,
         quotedMessageId: replyingTo?.id,
         ...media,
@@ -403,11 +426,12 @@ const CrmInbox = () => {
       setContacts((current) => current.map((item) => (
         String(item.id) === contactId ? { ...item, automationMode: 'human' } : item
       )));
-      if (String(selectedRef.current?.id) === contactId) {
-        await loadMessages();
-        if (String(selectedRef.current?.id) === contactId) await loadContacts();
-      }
-    } catch (err) { setError(err.response?.data?.error || 'No se pudo enviar el mensaje'); }
+      if (data.message) setMessages((current) => current.map((item) => item.id === optimisticId ? data.message : item));
+      window.setTimeout(() => { loadMessages(); loadContacts(); }, 250);
+    } catch (err) {
+      setMessages((current) => current.filter((item) => item.id !== optimisticId));
+      setError(err.response?.data?.error || 'No se pudo enviar el mensaje');
+    }
     finally { setSending(false); }
   };
 
@@ -721,43 +745,7 @@ const CrmInbox = () => {
                   backgroundImage: 'radial-gradient(rgba(11,20,26,.045) 1px, transparent 1px)',
                   backgroundSize: '18px 18px',
                 }}>
-                  <Stack spacing={1} sx={{ minHeight: '100%', justifyContent: messages.length ? 'flex-start' : 'center' }}>
-                    {!messages.length && <Typography variant="body2" color="text.secondary" textAlign="center">Todavía no hay mensajes en esta conversación.</Typography>}
-                    {messages.map((item) => {
-                      const outgoing = item.direction === 'outgoing';
-                      return (
-                        <Box
-                          key={item.id}
-                          sx={{
-                            alignSelf: outgoing ? 'flex-end' : 'flex-start',
-                            maxWidth: { xs: '88%', sm: '78%' },
-                            bgcolor: outgoing ? 'success.main' : 'background.paper',
-                            color: outgoing ? 'success.contrastText' : 'text.primary',
-                            px: 1.5,
-                            py: 1,
-                            borderRadius: 2,
-                            borderTopRightRadius: outgoing ? 0.5 : 2,
-                            borderTopLeftRadius: outgoing ? 2 : 0.5,
-                            boxShadow: 1,
-                            position: 'relative',
-                            '&:hover .reply-action': { opacity: 1 },
-                          }}
-                        >
-                          <MessageContent item={item} sessionId={sessionId} contactId={selected.id} />
-                          {item.canReply && <Tooltip title="Responder">
-                            <IconButton className="reply-action" size="small" color="inherit" onClick={() => setReplyingTo(item)} aria-label="Responder a este mensaje" sx={{ position: 'absolute', top: 2, right: 2, opacity: 0, bgcolor: 'rgba(255,255,255,.55)', transition: 'opacity .12s', '&:focus-visible': { opacity: 1 } }}><Reply fontSize="small" /></IconButton>
-                          </Tooltip>}
-                          <Typography
-                            variant="caption"
-                            color={outgoing ? 'inherit' : 'text.secondary'}
-                            sx={{ display: 'block', textAlign: 'right', mt: 0.5, opacity: outgoing ? 0.8 : 1 }}
-                          >
-                            {new Date(item.messageTimestamp || item.createdAt).toLocaleString()}
-                          </Typography>
-                        </Box>
-                      );
-                    })}
-                  </Stack>
+                  <MessageList messages={messages} sessionId={sessionId} contactId={selected.id} onReply={setReplyingTo} />
                 </Box>
 
                 <Box sx={{
