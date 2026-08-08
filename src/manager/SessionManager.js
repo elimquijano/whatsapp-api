@@ -16,6 +16,7 @@ import WhatsAppSession from "../models/WhatsAppSession.js";
 import aiCrmService from "../services/aiCrmService.js";
 import { normalizePhoneNumber, resolveWhatsAppIdentity } from "../utils/whatsappIdentity.js";
 import { repairStoredLidContacts } from "../services/crmIdentityService.js";
+import { publishCrmUpdate } from "../services/crmRealtimeService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -302,6 +303,7 @@ class SessionManager {
             }
           }
           await Promise.allSettled(tasks);
+          if (tasks.length) publishCrmUpdate({ userId, sessionId, reason: "messages.upsert" });
         } catch (error) {
           this.logger.error("Error processing webhook:", error);
         }
