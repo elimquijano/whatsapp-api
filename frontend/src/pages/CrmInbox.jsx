@@ -6,7 +6,7 @@ import {
   useTheme
 } from '@mui/material';
 import {
-  ArrowBack, AttachFile, Close, CloudDownload, InfoOutlined, LocationOn, PersonOutline,
+  ArrowBack, AttachFile, CallMade, CallMissed, CallReceived, Close, CloudDownload, InfoOutlined, LocationOn, PersonOutline,
   Refresh, Reply, Search, Send, SmartToy, WhatsApp
 } from '@mui/icons-material';
 import axios from 'axios';
@@ -82,10 +82,17 @@ const MessageContent = ({ item, sessionId, contactId }) => {
   }, [mediaEndpoint, item.media?.available]);
 
   const quoted = item.quoted && (
-    <Paper variant="outlined" sx={{ mb: 0.75, px: 1, py: 0.5, bgcolor: 'rgba(0,0,0,0.06)', borderLeft: 3, borderLeftColor: 'primary.main' }}>
-      <Typography variant="caption" noWrap component="div">{item.quoted.content || 'Mensaje'}</Typography>
+    <Paper elevation={0} sx={{ mb: 0.75, px: 1, py: 0.65, bgcolor: 'rgba(0,0,0,0.07)', borderLeft: 4, borderLeftColor: '#00a884', borderRadius: 1 }}>
+      <Typography variant="caption" fontWeight={600} noWrap component="div">{item.quoted.content || 'Mensaje'}</Typography>
     </Paper>
   );
+
+  if (type === 'call') {
+    const missed = /perdida|no contestada/i.test(item.content || '');
+    const outgoing = item.direction === 'outgoing';
+    const CallIcon = missed ? CallMissed : outgoing ? CallMade : CallReceived;
+    return <Stack direction="row" spacing={1.25} alignItems="center" sx={{ minWidth: 190 }}><Avatar sx={{ width: 36, height: 36, bgcolor: missed ? 'error.main' : 'success.main' }}><CallIcon fontSize="small" /></Avatar><Box><Typography variant="body2" fontWeight={600}>{String(item.content || '').replace(/^\[|\]$/g, '')}</Typography><Typography variant="caption" sx={{ opacity: 0.7 }}>{outgoing ? 'Saliente' : 'Entrante'}</Typography></Box></Stack>;
+  }
 
   if (item.location) {
     const { latitude, longitude, live, name } = item.location;
@@ -132,6 +139,7 @@ const CrmInbox = () => {
   const renderedConversationRef = useRef({ contactId: null, signature: '', visible: false });
   const contactsRequestRef = useRef({ id: 0, controller: null });
   const messagesRequestRef = useRef({ id: 0, controller: null });
+  const messagesLoadingRef = useRef(false);
   const selectedRef = useRef(null);
   const contactMutationRef = useRef({
     id: 0,
@@ -198,8 +206,8 @@ const CrmInbox = () => {
   }, [loadContacts]);
 
   const loadMessages = useCallback(async () => {
-    if (!selected?.id) return;
-    messagesRequestRef.current.controller?.abort();
+    if (!selected?.id || messagesLoadingRef.current) return;
+    messagesLoadingRef.current = true;
     const controller = new AbortController();
     const requestId = messagesRequestRef.current.id + 1;
     const contactId = selected.id;
@@ -219,10 +227,13 @@ const CrmInbox = () => {
           });
         return isUnchanged ? current : nextMessages;
       });
-      await axios.put(`/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/read`, undefined, { signal: controller.signal });
+      if (Number(selectedRef.current?.unreadCount) > 0) {
+        await axios.put(`/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/read`, undefined, { signal: controller.signal });
+        setContacts((current) => current.map((item) => String(item.id) === String(contactId) ? { ...item, unreadCount: 0 } : item));
+      }
     } catch (err) {
       if (err.code !== 'ERR_CANCELED') setError(err.response?.data?.error || 'No se pudo cargar la conversación');
-    }
+    } finally { messagesLoadingRef.current = false; }
   }, [selected?.id, sessionId]);
 
   useEffect(() => {
@@ -706,6 +717,9 @@ const CrmInbox = () => {
                   overflowY: 'auto',
                   overscrollBehavior: 'contain',
                   p: { xs: 1.25, sm: 2 },
+                  backgroundColor: '#efeae2',
+                  backgroundImage: 'radial-gradient(rgba(11,20,26,.045) 1px, transparent 1px)',
+                  backgroundSize: '18px 18px',
                 }}>
                   <Stack spacing={1} sx={{ minHeight: '100%', justifyContent: messages.length ? 'flex-start' : 'center' }}>
                     {!messages.length && <Typography variant="body2" color="text.secondary" textAlign="center">Todavía no hay mensajes en esta conversación.</Typography>}
@@ -725,12 +739,14 @@ const CrmInbox = () => {
                             borderTopRightRadius: outgoing ? 0.5 : 2,
                             borderTopLeftRadius: outgoing ? 2 : 0.5,
                             boxShadow: 1,
+                            position: 'relative',
+                            '&:hover .reply-action': { opacity: 1 },
                           }}
                         >
                           <MessageContent item={item} sessionId={sessionId} contactId={selected.id} />
-                          <Tooltip title="Responder">
-                            <IconButton size="small" color="inherit" onClick={() => setReplyingTo(item)} aria-label="Responder a este mensaje" sx={{ float: 'left', ml: -1, mb: -1 }}><Reply fontSize="small" /></IconButton>
-                          </Tooltip>
+                          {item.canReply && <Tooltip title="Responder">
+                            <IconButton className="reply-action" size="small" color="inherit" onClick={() => setReplyingTo(item)} aria-label="Responder a este mensaje" sx={{ position: 'absolute', top: 2, right: 2, opacity: 0, bgcolor: 'rgba(255,255,255,.55)', transition: 'opacity .12s', '&:focus-visible': { opacity: 1 } }}><Reply fontSize="small" /></IconButton>
+                          </Tooltip>}
                           <Typography
                             variant="caption"
                             color={outgoing ? 'inherit' : 'text.secondary'}

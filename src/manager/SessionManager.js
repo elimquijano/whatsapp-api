@@ -312,9 +312,13 @@ class SessionManager {
         for (const call of calls || []) {
           try {
             const ownPhone = normalizePhoneNumber(sock.user?.id);
-            const callerPhone = normalizePhoneNumber(call.callerPn || call.from);
-            const fromMe = Boolean(ownPhone && callerPhone && ownPhone === callerPhone);
-            const remoteJid = fromMe ? call.chatId : (call.callerPn || call.from || call.chatId);
+            const chatPhone = normalizePhoneNumber(call.chatId);
+            // En llamadas salientes Baileys informa el JID propio en chatId y
+            // el destinatario en from. callerPn no representa de forma fiable
+            // quién inició la llamada.
+            const fromMe = Boolean(ownPhone && chatPhone && ownPhone === chatPhone)
+              || Boolean(call.fromMe === true);
+            const remoteJid = fromMe ? (call.callerPn || call.from) : (call.callerPn || call.from || call.chatId);
             const identity = await resolveWhatsAppIdentity({
               sock,
               msg: { key: { remoteJid, remoteJidAlt: call.callerPn } },
