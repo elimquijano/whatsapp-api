@@ -216,8 +216,9 @@ export const markRead = async (req, res) => {
 export const sendManualMessage = async (req, res) => {
   try {
     if (!await professionalGuard(req, res)) return;
-    const content = String(req.body.message || "").trim();
-    const mediaType = String(req.body.type || "text").toLowerCase();
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const content = String(body.message || "").trim();
+    const mediaType = String(body.type || "text").toLowerCase();
     if (!content && mediaType === "text") return res.status(400).json({ success: false, error: "El mensaje es obligatorio" });
     const contact = await ownedContact(req);
     if (!contact) return res.status(404).json({ success: false, error: "Contacto no encontrado" });
@@ -233,8 +234,8 @@ export const sendManualMessage = async (req, res) => {
     // final y no compite con el mensaje manual.
     await contact.update({ automationMode: "human" });
     let quoted;
-    if (req.body.quotedMessageId) {
-      const quotedRecord = await AiMessage.findOne({ where: { id: req.body.quotedMessageId, crmContactId: contact.id } });
+    if (body.quotedMessageId) {
+      const quotedRecord = await AiMessage.findOne({ where: { id: body.quotedMessageId, crmContactId: contact.id } });
       if (!quotedRecord?.rawPayload) return res.status(400).json({ success: false, error: "Ese elemento no se puede responder en WhatsApp" });
       const candidate = parseWhatsAppPayload(quotedRecord.rawPayload);
       if (!canQuoteMessage(quotedRecord, candidate)) {
@@ -248,10 +249,17 @@ export const sendManualMessage = async (req, res) => {
     if (mediaType === "text") {
       outgoingType = "text";
       outgoingContent = content;
-      result = await session.sock.sendMessage(jid, { text: content }, quoted ? { quoted } : undefined);
+      try {
+        result = await session.sock.sendMessage(jid, { text: content }, quoted ? { quoted } : undefined);
+      } catch (error) {
+        // A quoted payload can become incompatible after a Baileys upgrade. The
+        // actual message is more important than preserving the visual quote.
+        if (!quoted || !/reading ['"]message['"]|quoted/i.test(String(error?.message))) throw error;
+        result = await session.sock.sendMessage(jid, { text: content });
+      }
     } else {
-      const payload = resolveMediaInput({ payload: req.body.payload, base64: req.body.base64, mimetype: req.body.mimetype });
-      const messagePayload = buildMediaMessage({ type: mediaType, payload, caption: content, filename: req.body.filename, mimetype: req.body.mimetype });
+      const payload = resolveMediaInput({ payload: body.payload, base64: body.base64, mimetype: body.mimetype });
+      const messagePayload = buildMediaMessage({ type: mediaType, payload, caption: content, filename: body.filename, mimetype: body.mimetype });
       outgoingType = mediaType;
       outgoingContent = content || (mediaType === "audio" ? "[Audio enviado]" : `[${mediaType} enviado]`);
       result = await session.sock.sendMessage(jid, messagePayload, quoted ? { quoted } : undefined);
