@@ -16,6 +16,7 @@ import { parseSafeHttpUrl, safeFetchJson } from "../utils/safeHttp.js";
 import { sessionIdFromRequest, sessionOwnershipWhere } from "../utils/sessionScope.js";
 import { isInternalLidJid, normalizePhoneNumber, phoneJidFromNumber } from "../utils/whatsappIdentity.js";
 import { campaignAudienceWhere } from "../utils/campaignAudience.js";
+import { downloadMediaMessage } from "@whiskeysockets/baileys";
 
 const statuses = new Set(["new", "interested", "urgent", "follow_up", "customer", "not_interested"]);
 const automationModes = new Set(["inherit", "automatic", "human"]);
@@ -43,6 +44,9 @@ const ownedCampaign = (req) => CrmCampaign.findByPk(req.params.campaignId, {
   include: [sessionOwnershipInclude(req)],
 });
 const getPath = (source, path) => String(path || "").split(".").filter(Boolean).reduce((value, key) => value?.[key], source);
+const parseWhatsAppPayload = (value) => JSON.parse(value, (_key, item) => (
+  item?.type === "Buffer" && Array.isArray(item.data) ? Buffer.from(item.data) : item
+));
 
 const professionalGuard = async (req, res) => {
   if (req.crmProfessionalAccess === true) return true;
@@ -91,9 +95,68 @@ export const getContactMessages = async (req, res) => {
       order: [["messageTimestamp", "DESC"], ["id", "DESC"]],
       limit: Math.min(500, Math.max(1, Number(req.query.limit) || 200)),
     });
-    const messages = newestFirst.reverse();
+    const messages = newestFirst.reverse().map((record) => {
+      const message = record.toJSON();
+      delete message.rawPayload;
+      if (!record.rawPayload) return message;
+      try {
+        const payload = parseWhatsAppPayload(record.rawPayload);
+        const inner = payload.message?.ephemeralMessage?.message
+          || payload.message?.viewOnceMessageV2?.message
+          || payload.message?.viewOnceMessage?.message
+          || payload.message || {};
+        const media = mediaMessageDetails(payload);
+        if (media) message.media = { available: true, mimetype: media.mimetype, filename: media.filename };
+        const location = inner.locationMessage || inner.liveLocationMessage;
+        if (location) message.location = {
+          latitude: location.degreesLatitude,
+          longitude: location.degreesLongitude,
+          live: Boolean(inner.liveLocationMessage),
+          name: location.name || location.address || null,
+        };
+      } catch { /* Los mensajes legacy pueden no contener JSON utilizable. */ }
+      return message;
+    });
     res.json({ success: true, sessionId: contact.whatsappSession.sessionId, contact, messages });
   } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+};
+
+const mediaMessageDetails = (payload = {}) => {
+  const message = payload.message?.ephemeralMessage?.message
+    || payload.message?.viewOnceMessageV2?.message
+    || payload.message?.viewOnceMessage?.message
+    || payload.message?.documentWithCaptionMessage?.message
+    || payload.message
+    || {};
+  const entry = message.imageMessage || message.videoMessage || message.audioMessage
+    || message.documentMessage || message.stickerMessage;
+  if (!entry) return null;
+  return {
+    mimetype: entry.mimetype || (message.stickerMessage ? "image/webp" : "application/octet-stream"),
+    filename: entry.fileName || (message.stickerMessage ? "sticker.webp" : "archivo"),
+  };
+};
+
+export const getMessageMedia = async (req, res) => {
+  try {
+    if (!await professionalGuard(req, res)) return;
+    const contact = await ownedContact(req);
+    if (!contact) return res.status(404).json({ success: false, error: "Contacto no encontrado" });
+    const message = await AiMessage.findOne({ where: { id: req.params.messageId, crmContactId: contact.id } });
+    if (!message?.rawPayload) return res.status(404).json({ success: false, error: "El archivo multimedia no está disponible" });
+    const payload = parseWhatsAppPayload(message.rawPayload);
+    const details = mediaMessageDetails(payload);
+    if (!details) return res.status(404).json({ success: false, error: "Este mensaje no contiene un archivo multimedia" });
+    const session = sessionManager.getSession(req.user.id, contact.whatsappSession.sessionId);
+    if (!session?.sock) return res.status(409).json({ success: false, error: "Conecta la sesión de WhatsApp para descargar el archivo" });
+    const buffer = await downloadMediaMessage(payload, "buffer", {}, { logger: console, reuploadRequest: session.sock.updateMediaMessage });
+    res.setHeader("Content-Type", details.mimetype);
+    res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(details.filename)}`);
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.send(buffer);
+  } catch (error) {
+    res.status(500).json({ success: false, error: `No se pudo descargar el archivo: ${error.message}` });
+  }
 };
 
 export const updateContact = async (req, res) => {
