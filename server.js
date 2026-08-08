@@ -43,6 +43,7 @@ const isLargeJsonRoute = (path, method) => method === "POST" && (
   path === "/api/v1/messages/media"
   || path === "/api/crm/campaigns"
   || /^\/api\/v1\/sessions\/[^/]+\/messages\/media$/.test(path)
+  || /^\/api\/v1\/sessions\/[^/]+\/crm\/contacts\/[^/]+\/messages$/.test(path)
   || /^\/api\/v1\/sessions\/[^/]+\/crm\/campaigns$/.test(path)
   || /^\/api\/v1\/sessions\/[^/]+\/crm\/campaign-ai\/generate$/.test(path)
 );
