@@ -69,6 +69,19 @@ export const isAiReplyEnabled = (automationMode, autoReplyEnabled) => (
   || (automationMode === "inherit" && autoReplyEnabled === true)
 );
 
+export const callNotificationDetails = (call, { fromMe = false } = {}) => {
+  const status = String(call?.status || "").toLowerCase();
+  const isVideo = call?.isVideo === true;
+  const kind = isVideo ? "Videollamada" : "Llamada";
+
+  // Los estados intermedios se repiten varias veces para la misma llamada. Solo
+  // persistimos el primer estado que le aporta información útil al operador.
+  if (fromMe && status === "offer") return { type: "call", content: `[${kind} realizada]`, direction: "outgoing", role: "assistant" };
+  if (["timeout", "reject"].includes(status)) return { type: "call", content: `[${kind} perdida]`, direction: "incoming", role: "user" };
+  if (status === "accept") return { type: "call", content: `[${kind} recibida]`, direction: "incoming", role: "user" };
+  return null;
+};
+
 export const resolveGlobalTaskPermissions = (config = {}) => {
   const globalExecutionPlan = getEnabledGlobalTaskKeys(config.globalWorkflow, config.permissions || []);
   const permissions = (config.permissions || [])
@@ -536,6 +549,40 @@ class AiCrmService {
     const current = previous.catch(() => {}).then(() => this.processMessage(input));
     this.queues.set(contactKey, current);
     try { return await current; } finally { if (this.queues.get(contactKey) === current) this.queues.delete(contactKey); }
+  }
+
+  async handleCall({ userId, sessionId, call, identity, fromMe = false }) {
+    const extracted = callNotificationDetails(call, { fromMe });
+    if (!extracted || !identity?.resolved) return null;
+    const sessionRecord = await WhatsAppSession.findOne({ where: { userId, sessionId } });
+    if (!sessionRecord) return null;
+    const rawDate = call?.date instanceof Date ? call.date : new Date(call?.date || Date.now());
+    const messageDate = Number.isNaN(rawDate.getTime()) ? new Date() : rawDate;
+    const contact = await findOrCreateResolvedContact({ sessionRecord, identity, messageDate });
+    if (!contact) return null;
+    const msg = {
+      key: { id: `call:${call.id}`, remoteJid: identity.phoneJid, fromMe },
+      messageTimestamp: messageDate.getTime(),
+      call,
+    };
+    const saved = await this.saveMessage(
+      sessionRecord,
+      contact,
+      msg,
+      identity.phoneJid,
+      identity.phone,
+      extracted,
+      extracted.direction,
+      extracted.role,
+      { automatic: false, callStatus: call.status, isVideo: call.isVideo === true },
+    );
+    if (saved.created) {
+      contact.lastMessageAt = messageDate;
+      contact.lastMessagePreview = extracted.content;
+      if (!fromMe) contact.unreadCount += 1;
+      await contact.save();
+    }
+    return saved;
   }
 
   extractMessage(msg) {
