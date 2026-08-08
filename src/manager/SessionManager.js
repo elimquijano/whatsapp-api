@@ -305,6 +305,29 @@ class SessionManager {
         }
       });
 
+      sock.ev.on("call", async (calls) => {
+        if (!isCurrentSession()) return;
+        for (const call of calls || []) {
+          try {
+            const ownPhone = normalizePhoneNumber(sock.user?.id);
+            const callerPhone = normalizePhoneNumber(call.callerPn || call.from);
+            const fromMe = Boolean(ownPhone && callerPhone && ownPhone === callerPhone);
+            const remoteJid = fromMe ? call.chatId : (call.callerPn || call.from || call.chatId);
+            const identity = await resolveWhatsAppIdentity({
+              sock,
+              msg: { key: { remoteJid, remoteJidAlt: call.callerPn } },
+            });
+            if (!identity.resolved) {
+              this.logger.warn({ userId, sessionId, callId: call.id }, "Llamada omitida porque no se pudo resolver el número");
+              continue;
+            }
+            await aiCrmService.handleCall({ userId, sessionId, call, identity, fromMe });
+          } catch (error) {
+            this.logger.error({ userId, sessionId, callId: call?.id, error: error.message }, "Error procesando llamada de WhatsApp");
+          }
+        }
+      });
+
       sock.ev.on("creds.update", async () => {
         if (!isCurrentSession()) return;
         try {
