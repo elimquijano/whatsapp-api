@@ -218,9 +218,10 @@ const CrmInbox = () => {
 
   useEffect(() => {
     loadContacts();
-    const timer = setInterval(loadContacts, 5000);
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') loadContacts(); };
+    document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
-      clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
       contactsRequestRef.current.controller?.abort();
     };
   }, [loadContacts]);
@@ -258,12 +259,44 @@ const CrmInbox = () => {
 
   useEffect(() => {
     loadMessages();
-    const timer = setInterval(loadMessages, 3000);
     return () => {
-      clearInterval(timer);
       messagesRequestRef.current.controller?.abort();
     };
   }, [loadMessages]);
+
+  useEffect(() => {
+    if (!sessionId) return undefined;
+    const controller = new AbortController();
+    let reconnectTimer;
+    let active = true;
+
+    const connect = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const url = axios.getUri({ url: `/api/v1/sessions/${sessionId}/crm/events` });
+        const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+        if (!response.ok || !response.body) throw new Error('Canal CRM no disponible');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (active) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+          if (events.some((event) => event.includes('event: update'))) {
+            loadContacts();
+            if (selectedRef.current?.id) loadMessages();
+          }
+        }
+      } catch (eventError) {
+        if (eventError.name !== 'AbortError' && active) reconnectTimer = window.setTimeout(connect, 3000);
+      }
+    };
+    connect();
+    return () => { active = false; controller.abort(); window.clearTimeout(reconnectTimer); };
+  }, [loadContacts, loadMessages, sessionId]);
 
   useLayoutEffect(() => {
     if (!selected?.id) return undefined;
@@ -459,6 +492,9 @@ const CrmInbox = () => {
     setSelected(contact);
     selectedRef.current = contact;
     setMessages([]);
+    setDraft('');
+    setAttachment(null);
+    setReplyingTo(null);
     setMobilePanel('chat');
   };
 
@@ -680,7 +716,7 @@ const CrmInbox = () => {
               minHeight: 0,
               display: { xs: mobilePanel === 'chat' ? 'flex' : 'none', lg: 'flex' },
               flexDirection: 'column',
-              bgcolor: 'background.default',
+              bgcolor: 'transparent',
             }}
           >
             {!selected ? (
@@ -741,9 +777,7 @@ const CrmInbox = () => {
                   overflowY: 'auto',
                   overscrollBehavior: 'contain',
                   p: { xs: 1.25, sm: 2 },
-                  backgroundColor: '#efeae2',
-                  backgroundImage: 'radial-gradient(rgba(11,20,26,.045) 1px, transparent 1px)',
-                  backgroundSize: '18px 18px',
+                  backgroundColor: 'transparent',
                 }}>
                   <MessageList messages={messages} sessionId={sessionId} contactId={selected.id} onReply={setReplyingTo} />
                 </Box>

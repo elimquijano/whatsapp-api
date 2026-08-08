@@ -34,6 +34,7 @@ import { isInternalLidJid, normalizePhoneNumber, phoneJidFromNumber } from "./sr
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { Op } from "sequelize";
+import { subscribeToCrmUpdates } from "./src/services/crmRealtimeService.js";
 
 const app = express();
 let serverReady = false;
@@ -228,11 +229,27 @@ app.get("/api/v1/sessions/:sessionId/ai/workflow-executions", authenticateToken,
 app.get("/api/v1/sessions/:sessionId/ai/workflow-executions/:executionId", authenticateToken, aiCrmController.getWorkflowExecution);
 app.post("/api/v1/sessions/:sessionId/ai/workflows/tasks/:taskKey/test", authenticateToken, aiCrmController.testWorkflowTask);
 app.get("/api/v1/sessions/:sessionId/crm/contacts", authenticateToken, crmController.listContacts);
+app.get("/api/v1/sessions/:sessionId/crm/events", authenticateToken, async (req, res) => {
+  const session = await WhatsAppSession.findOne({ where: { userId: req.user.id, sessionId: req.params.sessionId } });
+  if (!session) return res.status(404).json({ success: false, error: "Sesión no encontrada" });
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+  res.write("retry: 3000\nevent: ready\ndata: {}\n\n");
+
+  const unsubscribe = subscribeToCrmUpdates({ userId: req.user.id, sessionId: req.params.sessionId }, (event) => {
+    res.write(`event: update\ndata: ${JSON.stringify(event)}\n\n`);
+  });
+  const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 25000);
+  req.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
+});
 app.get("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages", authenticateToken, crmController.getContactMessages);
 app.get("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages/:messageId/media", authenticateToken, crmController.getMessageMedia);
 app.put("/api/v1/sessions/:sessionId/crm/contacts/:contactId", authenticateToken, crmController.updateContact);
 app.put("/api/v1/sessions/:sessionId/crm/contacts/:contactId/read", authenticateToken, crmController.markRead);
-app.post("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages", authenticateToken, crmController.sendManualMessage);
+app.post("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages", authenticateToken, largeJsonBody, crmController.sendManualMessage);
 app.get("/api/v1/sessions/:sessionId/crm/import-sources", authenticateToken, crmController.listImportSources);
 app.post("/api/v1/sessions/:sessionId/crm/import-sources", authenticateToken, crmController.saveImportSource);
 app.post("/api/v1/sessions/:sessionId/crm/import-sources/:sourceId/run", authenticateToken, crmController.runImport);

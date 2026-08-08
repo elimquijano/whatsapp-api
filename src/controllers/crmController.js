@@ -17,6 +17,7 @@ import { sessionIdFromRequest, sessionOwnershipWhere } from "../utils/sessionSco
 import { isInternalLidJid, normalizePhoneNumber, phoneJidFromNumber } from "../utils/whatsappIdentity.js";
 import { campaignAudienceWhere } from "../utils/campaignAudience.js";
 import { downloadMediaMessage } from "@whiskeysockets/baileys";
+import { publishCrmUpdate } from "../services/crmRealtimeService.js";
 
 const statuses = new Set(["new", "interested", "urgent", "follow_up", "customer", "not_interested"]);
 const automationModes = new Set(["inherit", "automatic", "human"]);
@@ -275,6 +276,7 @@ export const sendManualMessage = async (req, res) => {
       });
     }
     await contact.update({ lastMessageAt: new Date(), lastMessagePreview: outgoingContent.slice(0, 500) });
+    publishCrmUpdate({ userId: req.user.id, sessionId: contact.whatsappSession.sessionId, contactId: contact.id, reason: "message.sent" });
     res.json({ success: true, sessionId: contact.whatsappSession.sessionId, message, contact });
   } catch (error) { res.status(error.statusCode || 500).json({ success: false, error: error.message }); }
 };
