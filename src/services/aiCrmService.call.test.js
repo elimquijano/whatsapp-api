@@ -26,5 +26,9 @@ test("distingue llamadas recibidas, videollamadas y llamadas realizadas", () => 
 test("ignora estados intermedios para no duplicar la conversación", () => {
   assert.equal(callNotificationDetails({ status: "ringing" }), null);
   assert.equal(callNotificationDetails({ status: "offer" }), null);
-  assert.equal(callNotificationDetails({ status: "terminate" }), null);
+});
+
+test("registra terminate como perdida cuando nunca llegó accept", () => {
+  assert.equal(callNotificationDetails({ status: "terminate" }).content, "[Llamada perdida]");
+  assert.equal(callNotificationDetails({ status: "terminate" }, { fromMe: true }).content, "[Llamada no contestada]");
 });

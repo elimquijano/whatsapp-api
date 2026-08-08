@@ -77,7 +77,7 @@ export const callNotificationDetails = (call, { fromMe = false } = {}) => {
   // Los estados intermedios se repiten varias veces para la misma llamada. Solo
   // persistimos el primer estado que le aporta información útil al operador.
   if (fromMe && status === "offer") return { type: "call", content: `[${kind} realizada]`, direction: "outgoing", role: "assistant" };
-  if (["timeout", "reject"].includes(status)) return { type: "call", content: `[${kind} ${fromMe ? "no contestada" : "perdida"}]`, direction: fromMe ? "outgoing" : "incoming", role: fromMe ? "assistant" : "user" };
+  if (["timeout", "reject", "terminate"].includes(status)) return { type: "call", content: `[${kind} ${fromMe ? "no contestada" : "perdida"}]`, direction: fromMe ? "outgoing" : "incoming", role: fromMe ? "assistant" : "user" };
   if (status === "accept") return { type: "call", content: `[${kind} ${fromMe ? "realizada" : "recibida"}]`, direction: fromMe ? "outgoing" : "incoming", role: fromMe ? "assistant" : "user" };
   return null;
 };

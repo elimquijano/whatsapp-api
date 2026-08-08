@@ -47,6 +47,14 @@ const getPath = (source, path) => String(path || "").split(".").filter(Boolean).
 const parseWhatsAppPayload = (value) => JSON.parse(value, (_key, item) => (
   item?.type === "Buffer" && Array.isArray(item.data) ? Buffer.from(item.data) : item
 ));
+const REPLYABLE_MESSAGE_TYPES = new Set(["text", "image", "gif", "video", "audio", "document", "sticker", "location", "live_location", "contact", "contacts"]);
+export const canQuoteMessage = (record, payload) => Boolean(
+  record
+  && REPLYABLE_MESSAGE_TYPES.has(record.messageType)
+  && payload?.key?.id
+  && payload?.message
+  && typeof payload.message === "object"
+);
 const unwrapMessage = (payload = {}) => payload.message?.ephemeralMessage?.message
   || payload.message?.viewOnceMessageV2?.message
   || payload.message?.viewOnceMessage?.message
@@ -127,6 +135,7 @@ export const getContactMessages = async (req, res) => {
         if (media) message.media = { available: true, mimetype: media.mimetype, filename: media.filename };
         message.viewOnce = Boolean(payload.message?.viewOnceMessageV2 || payload.message?.viewOnceMessage);
         message.quoted = quotedMessageDetails(payload);
+        message.canReply = canQuoteMessage(record, payload);
         const location = inner.locationMessage || inner.liveLocationMessage;
         if (location) message.location = {
           latitude: location.degreesLatitude,
@@ -226,7 +235,12 @@ export const sendManualMessage = async (req, res) => {
     let quoted;
     if (req.body.quotedMessageId) {
       const quotedRecord = await AiMessage.findOne({ where: { id: req.body.quotedMessageId, crmContactId: contact.id } });
-      if (quotedRecord?.rawPayload) quoted = parseWhatsAppPayload(quotedRecord.rawPayload);
+      if (!quotedRecord?.rawPayload) return res.status(400).json({ success: false, error: "Ese elemento no se puede responder en WhatsApp" });
+      const candidate = parseWhatsAppPayload(quotedRecord.rawPayload);
+      if (!canQuoteMessage(quotedRecord, candidate)) {
+        return res.status(400).json({ success: false, error: "WhatsApp no permite responder a ese elemento" });
+      }
+      quoted = candidate;
     }
     let outgoingContent;
     let outgoingType;
@@ -242,10 +256,16 @@ export const sendManualMessage = async (req, res) => {
       outgoingContent = content || (mediaType === "audio" ? "[Audio enviado]" : `[${mediaType} enviado]`);
       result = await session.sock.sendMessage(jid, messagePayload, quoted ? { quoted } : undefined);
     }
-    const [message] = await AiMessage.findOrCreate({
-      where: { whatsappSessionId: contact.whatsappSessionId, whatsappMessageId: result.key.id },
-      defaults: { crmContactId: contact.id, contactJid: jid, contactNumber: contact.phone, messageTimestamp: new Date(), direction: "outgoing", role: "assistant", messageType: outgoingType, content: outgoingContent, rawPayload: JSON.stringify(result), metadata: JSON.stringify({ automatic: false, sentFromCrm: true }) },
-    });
+    // Algunas versiones de Baileys no devuelven el WebMessageInfo al enviar
+    // multimedia. El evento messages.upsert lo persistirá; no debemos intentar
+    // leer result.key y convertir un envío correcto en un error HTTP.
+    let message = null;
+    if (result?.key?.id) {
+      [message] = await AiMessage.findOrCreate({
+        where: { whatsappSessionId: contact.whatsappSessionId, whatsappMessageId: result.key.id },
+        defaults: { crmContactId: contact.id, contactJid: jid, contactNumber: contact.phone, messageTimestamp: new Date(), direction: "outgoing", role: "assistant", messageType: outgoingType, content: outgoingContent, rawPayload: JSON.stringify(result), metadata: JSON.stringify({ automatic: false, sentFromCrm: true }) },
+      });
+    }
     await contact.update({ lastMessageAt: new Date(), lastMessagePreview: outgoingContent.slice(0, 500) });
     res.json({ success: true, sessionId: contact.whatsappSession.sessionId, message, contact });
   } catch (error) { res.status(error.statusCode || 500).json({ success: false, error: error.message }); }
