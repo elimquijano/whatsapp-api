@@ -228,6 +228,7 @@ app.get("/api/v1/sessions/:sessionId/ai/workflow-executions/:executionId", authe
 app.post("/api/v1/sessions/:sessionId/ai/workflows/tasks/:taskKey/test", authenticateToken, aiCrmController.testWorkflowTask);
 app.get("/api/v1/sessions/:sessionId/crm/contacts", authenticateToken, crmController.listContacts);
 app.get("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages", authenticateToken, crmController.getContactMessages);
+app.get("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages/:messageId/media", authenticateToken, crmController.getMessageMedia);
 app.put("/api/v1/sessions/:sessionId/crm/contacts/:contactId", authenticateToken, crmController.updateContact);
 app.put("/api/v1/sessions/:sessionId/crm/contacts/:contactId/read", authenticateToken, crmController.markRead);
 app.post("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages", authenticateToken, crmController.sendManualMessage);
@@ -255,6 +256,7 @@ app.get("/api/ai/sessions/:sessionId/workflow-executions/:executionId", authenti
 app.post("/api/ai/sessions/:sessionId/workflows/tasks/:taskKey/test", authenticateToken, aiCrmController.testWorkflowTask);
 app.get("/api/crm/sessions/:sessionId/contacts", authenticateToken, crmController.listContacts);
 app.get("/api/crm/contacts/:contactId/messages", authenticateToken, crmController.getContactMessages);
+app.get("/api/crm/contacts/:contactId/messages/:messageId/media", authenticateToken, crmController.getMessageMedia);
 app.put("/api/crm/contacts/:contactId", authenticateToken, crmController.updateContact);
 app.put("/api/crm/contacts/:contactId/read", authenticateToken, crmController.markRead);
 app.post("/api/crm/contacts/:contactId/messages", authenticateToken, crmController.sendManualMessage);

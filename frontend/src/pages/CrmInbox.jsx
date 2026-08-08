@@ -6,8 +6,8 @@ import {
   useTheme
 } from '@mui/material';
 import {
-  ArrowBack, CloudDownload, InfoOutlined, PersonOutline, Refresh, Search,
-  Send, SmartToy, WhatsApp
+  ArrowBack, AttachFile, CloudDownload, InfoOutlined, LocationOn, PersonOutline,
+  Refresh, Search, Send, SmartToy, WhatsApp
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useOutletContext, useParams } from 'react-router-dom';
@@ -56,6 +56,52 @@ const importSourceForm = (source) => ({
   requestBody: JSON.stringify(source.requestBody || {}, null, 2),
   fieldMapping: JSON.stringify(source.fieldMapping || {}, null, 2),
 });
+
+const LinkifiedText = ({ children }) => String(children || '').split(/(https?:\/\/[^\s]+)/gi).map((part, index) => (
+  /^https?:\/\//i.test(part)
+    ? <Box component="a" key={`${part}-${index}`} href={part} target="_blank" rel="noreferrer" sx={{ color: 'inherit', textDecoration: 'underline' }}>{part}</Box>
+    : part
+));
+
+const MessageContent = ({ item, sessionId, contactId }) => {
+  const [mediaUrl, setMediaUrl] = useState('');
+  const [mediaError, setMediaError] = useState(false);
+  const type = item.messageType || 'text';
+  const mediaEndpoint = `/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/messages/${item.id}/media`;
+
+  useEffect(() => {
+    if (!item.media?.available) return undefined;
+    let active = true;
+    let objectUrl = '';
+    axios.get(mediaEndpoint, { responseType: 'blob' }).then(({ data }) => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(data);
+      setMediaUrl(objectUrl);
+    }).catch(() => active && setMediaError(true));
+    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [mediaEndpoint, item.media?.available]);
+
+  if (item.location) {
+    const { latitude, longitude, live, name } = item.location;
+    const mapUrl = `https://www.google.com/maps?q=${latitude},${longitude}`;
+    return <Stack component="a" href={mapUrl} target="_blank" rel="noreferrer" direction="row" spacing={1} alignItems="center" sx={{ color: 'inherit', textDecoration: 'none', minWidth: 220 }}><LocationOn /><Box><Typography variant="body2" fontWeight={700}>{live ? 'Ubicación en tiempo real' : (name || 'Ubicación compartida')}</Typography><Typography variant="caption">Abrir en el mapa</Typography></Box></Stack>;
+  }
+
+  if (item.media?.available) {
+    if (!mediaUrl && !mediaError) return <Box sx={{ minWidth: 180, py: 2, textAlign: 'center' }}><CircularProgress size={24} color="inherit" /></Box>;
+    if (mediaError) return <Alert severity="warning">No se pudo cargar este archivo.</Alert>;
+    return <Stack spacing={0.75}>
+      {(type === 'image' || type === 'sticker') && <Box component="img" src={mediaUrl} alt={type === 'sticker' ? 'Sticker' : 'Imagen'} sx={{ display: 'block', maxWidth: '100%', width: type === 'sticker' ? 180 : 360, maxHeight: 420, objectFit: 'contain', borderRadius: 1 }} />}
+      {type === 'gif' && <Box component="video" src={mediaUrl} autoPlay loop muted playsInline sx={{ display: 'block', maxWidth: '100%', maxHeight: 420, borderRadius: 1 }} />}
+      {type === 'video' && <Box component="video" src={mediaUrl} controls playsInline sx={{ display: 'block', maxWidth: '100%', maxHeight: 420, borderRadius: 1 }} />}
+      {type === 'audio' && <Box component="audio" src={mediaUrl} controls sx={{ display: 'block', maxWidth: '100%' }} />}
+      {type === 'document' && <Button component="a" href={mediaUrl} download={item.media.filename} color="inherit" startIcon={<AttachFile />} sx={{ justifyContent: 'flex-start', textTransform: 'none' }}>{item.media.filename || 'Descargar archivo'}</Button>}
+      {item.content && <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}><LinkifiedText>{item.content}</LinkifiedText></Typography>}
+    </Stack>;
+  }
+
+  return <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}><LinkifiedText>{item.content}</LinkifiedText></Typography>;
+};
 
 const CrmInbox = () => {
   const theme = useTheme();
@@ -651,7 +697,7 @@ const CrmInbox = () => {
                             boxShadow: 1,
                           }}
                         >
-                          <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.content}</Typography>
+                          <MessageContent item={item} sessionId={sessionId} contactId={selected.id} />
                           <Typography
                             variant="caption"
                             color={outgoing ? 'inherit' : 'text.secondary'}

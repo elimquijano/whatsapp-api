@@ -547,13 +547,13 @@ class AiCrmService {
     if (message.protocolMessage || message.senderKeyDistributionMessage || message.reactionMessage || message.pollUpdateMessage || message.keepInChatMessage) return null;
     if (message.conversation) return { type: "text", content: message.conversation };
     if (message.extendedTextMessage?.text) return { type: "text", content: message.extendedTextMessage.text };
-    if (message.imageMessage) return { type: "image", content: message.imageMessage.caption || "[Imagen recibida sin texto]" };
-    if (message.videoMessage) return { type: "video", content: message.videoMessage.caption || "[Video recibido sin texto]" };
+    if (message.imageMessage) return { type: message.imageMessage.mimetype === "image/gif" ? "gif" : "image", content: message.imageMessage.caption || "" };
+    if (message.videoMessage) return { type: message.videoMessage.gifPlayback ? "gif" : "video", content: message.videoMessage.caption || "" };
     if (message.audioMessage) return { type: "audio", content: "[Audio recibido]" };
     if (message.documentMessage) return { type: "document", content: `[Documento recibido: ${message.documentMessage.fileName || "archivo"}]` };
-    if (message.locationMessage) return { type: "location", content: `[Ubicación compartida: lat=${message.locationMessage.degreesLatitude}, lon=${message.locationMessage.degreesLongitude}]` };
-    if (message.liveLocationMessage) return { type: "location", content: `[Ubicación en vivo: lat=${message.liveLocationMessage.degreesLatitude}, lon=${message.liveLocationMessage.degreesLongitude}]` };
-    if (message.stickerMessage) return { type: "sticker", content: "[Sticker recibido]" };
+    if (message.locationMessage) return { type: "location", content: message.locationMessage.name || message.locationMessage.address || "Ubicación compartida" };
+    if (message.liveLocationMessage) return { type: "live_location", content: message.liveLocationMessage.caption || "Ubicación en tiempo real" };
+    if (message.stickerMessage) return { type: "sticker", content: "" };
     if (message.contactMessage) return { type: "contact", content: `[Contacto recibido: ${message.contactMessage.displayName || "sin nombre"}]` };
     if (message.contactsArrayMessage) return { type: "contacts", content: `[${message.contactsArrayMessage.contacts?.length || 0} contactos recibidos]` };
     if (message.buttonsResponseMessage) return { type: "text", content: message.buttonsResponseMessage.selectedDisplayText || message.buttonsResponseMessage.selectedButtonId || "" };

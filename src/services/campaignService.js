@@ -78,7 +78,7 @@ class CampaignService {
           if (recipient.contact) {
             await AiMessage.findOrCreate({
               where: { whatsappSessionId: campaign.whatsappSessionId, whatsappMessageId: result.key.id },
-              defaults: { crmContactId: recipient.contact.id, contactJid: jid, contactNumber: recipient.phone, messageTimestamp: new Date(), direction: "outgoing", role: "assistant", messageType: campaign.messageType, content, metadata: JSON.stringify({ campaignId: campaign.id }) },
+              defaults: { crmContactId: recipient.contact.id, contactJid: jid, contactNumber: recipient.phone, messageTimestamp: new Date(), direction: "outgoing", role: "assistant", messageType: campaign.messageType, content, rawPayload: campaign.messageType === "text" ? null : JSON.stringify(result), metadata: JSON.stringify({ campaignId: campaign.id }) },
             });
             await recipient.contact.update({ lastMessageAt: new Date(), lastMessagePreview: content.slice(0, 500) });
           }
