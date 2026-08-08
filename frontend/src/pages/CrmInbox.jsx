@@ -6,8 +6,8 @@ import {
   useTheme
 } from '@mui/material';
 import {
-  ArrowBack, AttachFile, CloudDownload, InfoOutlined, LocationOn, PersonOutline,
-  Refresh, Search, Send, SmartToy, WhatsApp
+  ArrowBack, AttachFile, Close, CloudDownload, InfoOutlined, LocationOn, PersonOutline,
+  Refresh, Reply, Search, Send, SmartToy, WhatsApp
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useOutletContext, useParams } from 'react-router-dom';
@@ -81,16 +81,23 @@ const MessageContent = ({ item, sessionId, contactId }) => {
     return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [mediaEndpoint, item.media?.available]);
 
+  const quoted = item.quoted && (
+    <Paper variant="outlined" sx={{ mb: 0.75, px: 1, py: 0.5, bgcolor: 'rgba(0,0,0,0.06)', borderLeft: 3, borderLeftColor: 'primary.main' }}>
+      <Typography variant="caption" noWrap component="div">{item.quoted.content || 'Mensaje'}</Typography>
+    </Paper>
+  );
+
   if (item.location) {
     const { latitude, longitude, live, name } = item.location;
     const mapUrl = `https://www.google.com/maps?q=${latitude},${longitude}`;
-    return <Stack component="a" href={mapUrl} target="_blank" rel="noreferrer" direction="row" spacing={1} alignItems="center" sx={{ color: 'inherit', textDecoration: 'none', minWidth: 220 }}><LocationOn /><Box><Typography variant="body2" fontWeight={700}>{live ? 'Ubicación en tiempo real' : (name || 'Ubicación compartida')}</Typography><Typography variant="caption">Abrir en el mapa</Typography></Box></Stack>;
+    return <>{quoted}<Stack component="a" href={mapUrl} target="_blank" rel="noreferrer" direction="row" spacing={1} alignItems="center" sx={{ color: 'inherit', textDecoration: 'none', minWidth: 220 }}><LocationOn /><Box><Typography variant="body2" fontWeight={700}>{live ? 'Ubicación en tiempo real' : (name || 'Ubicación compartida')}</Typography><Typography variant="caption">Abrir en el mapa</Typography></Box></Stack></>;
   }
 
   if (item.media?.available) {
     if (!mediaUrl && !mediaError) return <Box sx={{ minWidth: 180, py: 2, textAlign: 'center' }}><CircularProgress size={24} color="inherit" /></Box>;
     if (mediaError) return <Alert severity="warning">No se pudo cargar este archivo.</Alert>;
-    return <Stack spacing={0.75}>
+    return <Stack spacing={0.75}>{quoted}
+      {item.viewOnce && <Chip size="small" label="Ver una vez" variant="outlined" sx={{ alignSelf: 'flex-start' }} />}
       {(type === 'image' || type === 'sticker') && <Box component="img" src={mediaUrl} alt={type === 'sticker' ? 'Sticker' : 'Imagen'} sx={{ display: 'block', maxWidth: '100%', width: type === 'sticker' ? 180 : 360, maxHeight: 420, objectFit: 'contain', borderRadius: 1 }} />}
       {type === 'gif' && <Box component="video" src={mediaUrl} autoPlay loop muted playsInline sx={{ display: 'block', maxWidth: '100%', maxHeight: 420, borderRadius: 1 }} />}
       {type === 'video' && <Box component="video" src={mediaUrl} controls playsInline sx={{ display: 'block', maxWidth: '100%', maxHeight: 420, borderRadius: 1 }} />}
@@ -100,7 +107,7 @@ const MessageContent = ({ item, sessionId, contactId }) => {
     </Stack>;
   }
 
-  return <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}><LinkifiedText>{item.content}</LinkifiedText></Typography>;
+  return <>{quoted}<Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}><LinkifiedText>{item.content}</LinkifiedText></Typography></>;
 };
 
 const CrmInbox = () => {
@@ -116,6 +123,8 @@ const CrmInbox = () => {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
+  const [attachment, setAttachment] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
   const [sessionAutomationSaving, setSessionAutomationSaving] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState('contacts');
@@ -141,6 +150,8 @@ const CrmInbox = () => {
     selectedRef.current = null;
     setMessages([]);
     setDraft('');
+    setAttachment(null);
+    setReplyingTo(null);
     setImportOpen(false);
     setMobilePanel('contacts');
   }, [sessionId]);
@@ -345,14 +356,33 @@ const CrmInbox = () => {
   const sendMessage = async () => {
     const target = selectedRef.current;
     const content = draft;
-    if (!content.trim() || !target?.id) return;
+    if ((!content.trim() && !attachment) || !target?.id) return;
     const contactId = String(target.id);
     setSending(true);
     try {
-      await axios.post(`/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/messages`, { message: content });
+      let media = {};
+      if (attachment) {
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('No se pudo leer el archivo'));
+          reader.readAsDataURL(attachment);
+        });
+        const type = attachment.type.startsWith('image/') ? 'image'
+          : attachment.type.startsWith('video/') ? 'video'
+            : attachment.type.startsWith('audio/') ? 'audio' : 'document';
+        media = { type, payload: dataUrl, filename: attachment.name, mimetype: attachment.type || 'application/octet-stream' };
+      }
+      await axios.post(`/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/messages`, {
+        message: content,
+        quotedMessageId: replyingTo?.id,
+        ...media,
+      });
       setDraft((current) => (
         String(selectedRef.current?.id) === contactId && current === content ? '' : current
       ));
+      setAttachment(null);
+      setReplyingTo(null);
       setSelected((current) => {
         if (String(current?.id) !== contactId) return current;
         const next = { ...current, automationMode: 'human' };
@@ -698,6 +728,9 @@ const CrmInbox = () => {
                           }}
                         >
                           <MessageContent item={item} sessionId={sessionId} contactId={selected.id} />
+                          <Tooltip title="Responder">
+                            <IconButton size="small" color="inherit" onClick={() => setReplyingTo(item)} aria-label="Responder a este mensaje" sx={{ float: 'left', ml: -1, mb: -1 }}><Reply fontSize="small" /></IconButton>
+                          </Tooltip>
                           <Typography
                             variant="caption"
                             color={outgoing ? 'inherit' : 'text.secondary'}
@@ -723,6 +756,28 @@ const CrmInbox = () => {
                   bottom: 0,
                   zIndex: 2,
                 }}>
+                  <IconButton component="label" disabled={sending} aria-label="Adjuntar archivo" sx={{ mb: 2.75, border: 1, borderColor: 'divider' }}>
+                    <AttachFile />
+                    <input hidden type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" onChange={(event) => {
+                      const file = event.target.files?.[0] || null;
+                      if (file && file.size > 10 * 1024 * 1024) {
+                        setError('El archivo supera el límite de 10 MB');
+                        event.target.value = '';
+                        return;
+                      }
+                      setAttachment(file);
+                    }} />
+                  </IconButton>
+                  <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                    {(replyingTo || attachment) && <Paper variant="outlined" sx={{ mb: 0.75, px: 1, py: 0.5 }}>
+                      <Stack direction="row" alignItems="center" spacing={1}>
+                        <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+                          {replyingTo && <Typography variant="caption" noWrap component="div">Respondiendo a: {replyingTo.content || replyingTo.messageType}</Typography>}
+                          {attachment && <Typography variant="caption" noWrap component="div">Adjunto: {attachment.name}</Typography>}
+                        </Box>
+                        <IconButton size="small" onClick={() => { setReplyingTo(null); setAttachment(null); }} aria-label="Quitar respuesta y adjunto"><Close fontSize="small" /></IconButton>
+                      </Stack>
+                    </Paper>}
                   <TextField
                     fullWidth
                     multiline
@@ -734,9 +789,10 @@ const CrmInbox = () => {
                     onChange={(event) => setDraft(event.target.value)}
                     onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); } }}
                   />
+                  </Box>
                   <IconButton
                     color="primary"
-                    disabled={sending || !draft.trim()}
+                    disabled={sending || (!draft.trim() && !attachment)}
                     onClick={sendMessage}
                     aria-label="Enviar mensaje"
                     sx={{ mb: 2.75, border: 1, borderColor: 'divider' }}

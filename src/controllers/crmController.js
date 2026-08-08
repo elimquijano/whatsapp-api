@@ -10,7 +10,7 @@ import AiMessage from "../models/AiMessage.js";
 import sequelize from "../database/db.js";
 import sessionManager from "../manager/SessionManager.js";
 import campaignService from "../services/campaignService.js";
-import { buildMediaMessage, MAX_MEDIA_BYTES, resolveMediaInput, sendTextMessage } from "../services/messageService.js";
+import { buildMediaMessage, MAX_MEDIA_BYTES, resolveMediaInput } from "../services/messageService.js";
 import { deleteCampaignMedia, storeCampaignMedia } from "../services/campaignMediaStorage.js";
 import { parseSafeHttpUrl, safeFetchJson } from "../utils/safeHttp.js";
 import { sessionIdFromRequest, sessionOwnershipWhere } from "../utils/sessionScope.js";
@@ -47,6 +47,27 @@ const getPath = (source, path) => String(path || "").split(".").filter(Boolean).
 const parseWhatsAppPayload = (value) => JSON.parse(value, (_key, item) => (
   item?.type === "Buffer" && Array.isArray(item.data) ? Buffer.from(item.data) : item
 ));
+const unwrapMessage = (payload = {}) => payload.message?.ephemeralMessage?.message
+  || payload.message?.viewOnceMessageV2?.message
+  || payload.message?.viewOnceMessage?.message
+  || payload.message?.documentWithCaptionMessage?.message
+  || payload.message || {};
+
+const quotedMessageDetails = (payload = {}) => {
+  const message = unwrapMessage(payload);
+  const entry = message.extendedTextMessage || message.imageMessage || message.videoMessage
+    || message.audioMessage || message.documentMessage || message.locationMessage
+    || message.liveLocationMessage || message.contactMessage;
+  const context = entry?.contextInfo;
+  if (!context?.quotedMessage) return null;
+  const quotedPayload = { message: context.quotedMessage };
+  const quoted = unwrapMessage(quotedPayload);
+  const content = quoted.conversation || quoted.extendedTextMessage?.text
+    || quoted.imageMessage?.caption || quoted.videoMessage?.caption
+    || quoted.documentMessage?.fileName || (quoted.audioMessage ? "Audio" : "")
+    || (quoted.stickerMessage ? "Sticker" : "") || "Mensaje";
+  return { whatsappMessageId: context.stanzaId || null, participant: context.participant || null, content };
+};
 
 const professionalGuard = async (req, res) => {
   if (req.crmProfessionalAccess === true) return true;
@@ -101,12 +122,11 @@ export const getContactMessages = async (req, res) => {
       if (!record.rawPayload) return message;
       try {
         const payload = parseWhatsAppPayload(record.rawPayload);
-        const inner = payload.message?.ephemeralMessage?.message
-          || payload.message?.viewOnceMessageV2?.message
-          || payload.message?.viewOnceMessage?.message
-          || payload.message || {};
+        const inner = unwrapMessage(payload);
         const media = mediaMessageDetails(payload);
         if (media) message.media = { available: true, mimetype: media.mimetype, filename: media.filename };
+        message.viewOnce = Boolean(payload.message?.viewOnceMessageV2 || payload.message?.viewOnceMessage);
+        message.quoted = quotedMessageDetails(payload);
         const location = inner.locationMessage || inner.liveLocationMessage;
         if (location) message.location = {
           latitude: location.degreesLatitude,
@@ -188,7 +208,8 @@ export const sendManualMessage = async (req, res) => {
   try {
     if (!await professionalGuard(req, res)) return;
     const content = String(req.body.message || "").trim();
-    if (!content) return res.status(400).json({ success: false, error: "El mensaje es obligatorio" });
+    const mediaType = String(req.body.type || "text").toLowerCase();
+    if (!content && mediaType === "text") return res.status(400).json({ success: false, error: "El mensaje es obligatorio" });
     const contact = await ownedContact(req);
     if (!contact) return res.status(404).json({ success: false, error: "Contacto no encontrado" });
     const session = sessionManager.getSession(req.user.id, contact.whatsappSession.sessionId);
@@ -202,12 +223,30 @@ export const sendManualMessage = async (req, res) => {
     // una respuesta IA que ya estaba procesándose lo detecta en su validación
     // final y no compite con el mensaje manual.
     await contact.update({ automationMode: "human" });
-    const result = await sendTextMessage({ sock: session.sock, recipient: jid, body: content });
+    let quoted;
+    if (req.body.quotedMessageId) {
+      const quotedRecord = await AiMessage.findOne({ where: { id: req.body.quotedMessageId, crmContactId: contact.id } });
+      if (quotedRecord?.rawPayload) quoted = parseWhatsAppPayload(quotedRecord.rawPayload);
+    }
+    let outgoingContent;
+    let outgoingType;
+    let result;
+    if (mediaType === "text") {
+      outgoingType = "text";
+      outgoingContent = content;
+      result = await session.sock.sendMessage(jid, { text: content }, quoted ? { quoted } : undefined);
+    } else {
+      const payload = resolveMediaInput({ payload: req.body.payload, base64: req.body.base64, mimetype: req.body.mimetype });
+      const messagePayload = buildMediaMessage({ type: mediaType, payload, caption: content, filename: req.body.filename, mimetype: req.body.mimetype });
+      outgoingType = mediaType;
+      outgoingContent = content || (mediaType === "audio" ? "[Audio enviado]" : `[${mediaType} enviado]`);
+      result = await session.sock.sendMessage(jid, messagePayload, quoted ? { quoted } : undefined);
+    }
     const [message] = await AiMessage.findOrCreate({
       where: { whatsappSessionId: contact.whatsappSessionId, whatsappMessageId: result.key.id },
-      defaults: { crmContactId: contact.id, contactJid: jid, contactNumber: contact.phone, messageTimestamp: new Date(), direction: "outgoing", role: "assistant", messageType: "text", content, metadata: JSON.stringify({ automatic: false, sentFromCrm: true }) },
+      defaults: { crmContactId: contact.id, contactJid: jid, contactNumber: contact.phone, messageTimestamp: new Date(), direction: "outgoing", role: "assistant", messageType: outgoingType, content: outgoingContent, rawPayload: JSON.stringify(result), metadata: JSON.stringify({ automatic: false, sentFromCrm: true }) },
     });
-    await contact.update({ lastMessageAt: new Date(), lastMessagePreview: content.slice(0, 500) });
+    await contact.update({ lastMessageAt: new Date(), lastMessagePreview: outgoingContent.slice(0, 500) });
     res.json({ success: true, sessionId: contact.whatsappSession.sessionId, message, contact });
   } catch (error) { res.status(error.statusCode || 500).json({ success: false, error: error.message }); }
 };

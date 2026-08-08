@@ -226,7 +226,7 @@ class SessionManager {
       sock.ev.on("messages.upsert", async ({ messages, type }) => {
         try {
           if (!isCurrentSession()) return;
-          if (type !== 'notify') return;
+          if (!['notify', 'append'].includes(type)) return;
           
           const user = await User.findByPk(userId);
           const sessionRecord = await WhatsAppSession.findOne({ where: { userId, sessionId } });
@@ -239,13 +239,14 @@ class SessionManager {
             return;
           }
 
+          const tasks = [];
           for (const msg of messages) {
             if (!msg.message) continue;
 
             // messages.upsert también contiene eventos internos de Baileys.
             // Solo los mensajes con contenido real llegan a BD, IA o webhook.
             const extractedMessage = aiCrmService.extractMessage(msg);
-            if (!extractedMessage || !extractedMessage.content) continue;
+            if (!extractedMessage) continue;
 
             const identity = await resolveWhatsAppIdentity({ sock, msg });
             if (!identity.resolved) {
@@ -283,16 +284,16 @@ class SessionManager {
             // IA CRM directa: guarda todos los mensajes en BD y responde solo si
             // el switch automático de esta sesión está activado.
             if (identity.resolved) {
-              await aiCrmService
-                .handleMessage({ userId, sessionId, sock, msg, identity })
+              tasks.push(aiCrmService
+                .handleMessage({ userId, sessionId, sock, msg, identity, allowAutomation: type === 'notify' })
                 .catch((err) => {
                   const log = err.code === "AI_MODEL_INVALID_JSON" ? this.logger.warn.bind(this.logger) : this.logger.error.bind(this.logger);
                   log({ userId, sessionId, code: err.code || "AI_CRM_ERROR", error: err.message }, "Fallo procesando IA CRM");
-                });
+                }));
             }
 
             // El webhook comercial anterior sigue disponible e independiente.
-            if (webhookUrl) {
+            if (webhookUrl && type === 'notify') {
               fetch(webhookUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -300,6 +301,7 @@ class SessionManager {
               }).catch(err => this.logger.error(`Webhook error for user ${userId}:`, err.message));
             }
           }
+          await Promise.allSettled(tasks);
         } catch (error) {
           this.logger.error("Error processing webhook:", error);
         }

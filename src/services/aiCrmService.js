@@ -77,8 +77,8 @@ export const callNotificationDetails = (call, { fromMe = false } = {}) => {
   // Los estados intermedios se repiten varias veces para la misma llamada. Solo
   // persistimos el primer estado que le aporta información útil al operador.
   if (fromMe && status === "offer") return { type: "call", content: `[${kind} realizada]`, direction: "outgoing", role: "assistant" };
-  if (["timeout", "reject"].includes(status)) return { type: "call", content: `[${kind} perdida]`, direction: "incoming", role: "user" };
-  if (status === "accept") return { type: "call", content: `[${kind} recibida]`, direction: "incoming", role: "user" };
+  if (["timeout", "reject"].includes(status)) return { type: "call", content: `[${kind} ${fromMe ? "no contestada" : "perdida"}]`, direction: fromMe ? "outgoing" : "incoming", role: fromMe ? "assistant" : "user" };
+  if (status === "accept") return { type: "call", content: `[${kind} ${fromMe ? "realizada" : "recibida"}]`, direction: fromMe ? "outgoing" : "incoming", role: fromMe ? "assistant" : "user" };
   return null;
 };
 
@@ -638,7 +638,7 @@ class AiCrmService {
     return Number.isNaN(date.getTime()) ? new Date() : date;
   }
 
-  async processMessage({ userId, sessionId, sock, msg, identity }) {
+  async processMessage({ userId, sessionId, sock, msg, identity, allowAutomation = true }) {
     const sourceJid = msg.key.remoteJid || "";
     if (!msg.message || sourceJid.endsWith("@g.us") || sourceJid === "status@broadcast") return;
     if (!identity?.resolved || !identity.phone || !identity.phoneJid) return;
@@ -662,7 +662,7 @@ class AiCrmService {
     if (!sessionRecord) return;
 
     const extracted = this.extractMessage(msg);
-    if (!extracted || !extracted.content) return;
+    if (!extracted) return;
     const fromMe = msg.key.fromMe === true;
     const contactNumber = identity.phone;
     const contact = await findOrCreateResolvedContact({
@@ -680,7 +680,7 @@ class AiCrmService {
       if (!fromMe) contact.unreadCount += 1;
       await contact.save();
     }
-    if (fromMe || !saved.created) return;
+    if (fromMe || !saved.created || !allowAutomation) return;
 
     const config = sessionRecord.aiConfig;
     if (!config) return;

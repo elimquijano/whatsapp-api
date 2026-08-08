@@ -15,6 +15,12 @@ test("distingue llamadas recibidas, videollamadas y llamadas realizadas", () => 
   assert.equal(callNotificationDetails({ status: "accept" }).content, "[Llamada recibida]");
   assert.equal(callNotificationDetails({ status: "reject", isVideo: true }).content, "[Videollamada perdida]");
   assert.equal(callNotificationDetails({ status: "offer" }, { fromMe: true }).content, "[Llamada realizada]");
+  assert.deepEqual(callNotificationDetails({ status: "reject", isVideo: true }, { fromMe: true }), {
+    type: "call",
+    content: "[Videollamada no contestada]",
+    direction: "outgoing",
+    role: "assistant",
+  });
 });
 
 test("ignora estados intermedios para no duplicar la conversación", () => {
