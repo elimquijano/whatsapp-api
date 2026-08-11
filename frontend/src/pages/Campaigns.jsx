@@ -50,6 +50,7 @@ import {
 } from '@mui/icons-material';
 import { alpha } from '@mui/material/styles';
 import axios from 'axios';
+import useSmartPolling from '../hooks/useSmartPolling';
 import { useParams } from 'react-router-dom';
 
 const statusLabels = {
@@ -275,11 +276,7 @@ const Campaigns = () => {
     setForm(newCampaignForm(sessionId));
   }, [sessionId]);
 
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
-  }, [load]);
+  useSmartPolling(load, 15000);
 
   useEffect(() => {
     if (!open || activeStep !== 0 || !sessionId) return undefined;

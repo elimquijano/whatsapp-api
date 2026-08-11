@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { lazy, Suspense, useState } from 'react';
 import {
   Alert,
   AppBar,
@@ -40,15 +40,16 @@ import {
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useColorMode } from '../context/ColorModeContext';
-import WhatsAppConnector from '../components/WhatsAppConnector';
-import MessageSender from '../components/MessageSender';
-import SessionWorkspace from '../components/SessionWorkspace';
-import ApiKeyDisplay from '../components/ApiKeyDisplay';
-import Users from './Users';
-import CrmInbox from './CrmInbox';
-import Campaigns from './Campaigns';
-import AiCrmConfigPage from './AiCrmConfigPage';
-import SessionApiPage from './SessionApiPage';
+
+const WhatsAppConnector = lazy(() => import('../components/WhatsAppConnector'));
+const MessageSender = lazy(() => import('../components/MessageSender'));
+const SessionWorkspace = lazy(() => import('../components/SessionWorkspace'));
+const ApiKeyDisplay = lazy(() => import('../components/ApiKeyDisplay'));
+const Users = lazy(() => import('./Users'));
+const CrmInbox = lazy(() => import('./CrmInbox'));
+const Campaigns = lazy(() => import('./Campaigns'));
+const AiCrmConfigPage = lazy(() => import('./AiCrmConfigPage'));
+const SessionApiPage = lazy(() => import('./SessionApiPage'));
 
 const SIDEBAR_WIDTH = 276;
 
@@ -303,7 +304,8 @@ const Dashboard = () => {
                 Tu suscripción venció. Contacta a soporte para renovarla y reactivar la automatización.
               </Alert>
             )}
-            <Routes>
+            <Suspense fallback={<Stack alignItems="center" sx={{ py: 8 }}><CircularProgress size={32} /></Stack>}>
+              <Routes>
               <Route path="/" element={<DashboardHome user={user} />} />
               <Route path="/docs" element={(
                 <Box>
@@ -329,7 +331,8 @@ const Dashboard = () => {
               <Route path="/crm" element={<Navigate to="/dashboard" replace />} />
               <Route path="/campaigns" element={<Navigate to="/dashboard" replace />} />
               <Route path="/ai/:sessionId" element={<LegacyAiRedirect />} />
-            </Routes>
+              </Routes>
+            </Suspense>
           </Container>
         </Box>
       </Box>

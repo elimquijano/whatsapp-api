@@ -100,13 +100,32 @@ const LinkifiedText = ({ children }) => String(children || '').split(/(https?:\/
 ));
 
 const MessageContent = memo(({ item, sessionId, contactId }) => {
+  const containerRef = useRef(null);
+  const [shouldLoadMedia, setShouldLoadMedia] = useState(false);
   const [mediaUrl, setMediaUrl] = useState('');
   const [mediaError, setMediaError] = useState(false);
   const type = item.messageType || 'text';
   const mediaEndpoint = `/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/messages/${item.id}/media`;
 
   useEffect(() => {
-    if (!item.media?.available) return undefined;
+    if (!item.media?.available || shouldLoadMedia) return undefined;
+    const element = containerRef.current;
+    if (!element || !('IntersectionObserver' in window)) {
+      setShouldLoadMedia(true);
+      return undefined;
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setShouldLoadMedia(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: '240px 0px' });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [item.media?.available, shouldLoadMedia]);
+
+  useEffect(() => {
+    if (!item.media?.available || !shouldLoadMedia) return undefined;
     let active = true;
     let objectUrl = '';
     axios.get(mediaEndpoint, { responseType: 'blob' }).then(({ data }) => {
@@ -115,7 +134,7 @@ const MessageContent = memo(({ item, sessionId, contactId }) => {
       setMediaUrl(objectUrl);
     }).catch(() => active && setMediaError(true));
     return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [mediaEndpoint, item.media?.available]);
+  }, [mediaEndpoint, item.media?.available, shouldLoadMedia]);
 
   const quoted = item.quoted && (
     <Paper elevation={0} sx={{ mb: 0.75, px: 1, py: 0.65, bgcolor: 'rgba(0,0,0,0.07)', borderLeft: 4, borderLeftColor: '#00a884', borderRadius: 1 }}>
@@ -137,6 +156,7 @@ const MessageContent = memo(({ item, sessionId, contactId }) => {
   }
 
   if (item.media?.available) {
+    if (!shouldLoadMedia) return <Box ref={containerRef} sx={{ width: 220, height: 120, bgcolor: 'rgba(0,0,0,.05)', borderRadius: 1 }} />;
     if (!mediaUrl && !mediaError) return <Box sx={{ minWidth: 180, py: 2, textAlign: 'center' }}><CircularProgress size={24} color="inherit" /></Box>;
     if (mediaError) return <Alert severity="warning">No se pudo cargar este archivo.</Alert>;
     return <Stack spacing={0.75}>{quoted}
@@ -231,6 +251,7 @@ const CrmInbox = () => {
   const [sessionAutomationSaving, setSessionAutomationSaving] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState('contacts');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const messageViewportRef = useRef(null);
   const renderedConversationRef = useRef({ contactId: null, signature: '', visible: false });
   const contactsRequestRef = useRef({ id: 0, controller: null });
@@ -245,6 +266,11 @@ const CrmInbox = () => {
   });
 
   useEffect(() => { selectedRef.current = selected; }, [selected]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   useEffect(() => {
     contactsRequestRef.current.controller?.abort();
@@ -266,7 +292,7 @@ const CrmInbox = () => {
     contactsRequestRef.current = { id: requestId, controller };
     try {
       const { data } = await axios.get(`/api/v1/sessions/${sessionId}/crm/contacts`, {
-        params: { ...(search ? { search } : {}), ...(status ? { status } : {}) },
+        params: { limit: 150, ...(debouncedSearch ? { search: debouncedSearch } : {}), ...(status ? { status } : {}) },
         signal: controller.signal,
       });
       if (contactsRequestRef.current.id !== requestId) return;
@@ -288,7 +314,7 @@ const CrmInbox = () => {
     } catch (err) {
       if (err.code !== 'ERR_CANCELED') setError(err.response?.data?.error || 'No se pudieron cargar los contactos');
     }
-  }, [sessionId, search, status]);
+  }, [sessionId, debouncedSearch, status]);
 
   useEffect(() => {
     loadContacts();
@@ -308,7 +334,7 @@ const CrmInbox = () => {
     const contactId = selected.id;
     messagesRequestRef.current = { id: requestId, controller };
     try {
-      const { data } = await axios.get(`/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/messages`, { signal: controller.signal });
+      const { data } = await axios.get(`/api/v1/sessions/${sessionId}/crm/contacts/${contactId}/messages`, { params: { limit: 80 }, signal: controller.signal });
       if (messagesRequestRef.current.id !== requestId) return;
       const nextMessages = data.messages || [];
       setMessages((current) => {
@@ -342,7 +368,26 @@ const CrmInbox = () => {
     if (!sessionId) return undefined;
     const controller = new AbortController();
     let reconnectTimer;
+    let refreshTimer;
+    let pendingContactsRefresh = false;
+    let pendingMessagesRefresh = false;
     let active = true;
+
+    const flushUpdates = () => {
+      refreshTimer = undefined;
+      if (!active || document.visibilityState !== 'visible') return;
+      if (pendingContactsRefresh) loadContacts();
+      if (pendingMessagesRefresh) loadMessages();
+      pendingContactsRefresh = false;
+      pendingMessagesRefresh = false;
+    };
+
+    const queueUpdate = (event) => {
+      pendingContactsRefresh = true;
+      const selectedId = selectedRef.current?.id;
+      pendingMessagesRefresh ||= Boolean(selectedId) && (!event?.contactId || String(event.contactId) === String(selectedId));
+      if (!refreshTimer) refreshTimer = window.setTimeout(flushUpdates, 180);
+    };
 
     const connect = async () => {
       try {
@@ -359,17 +404,18 @@ const CrmInbox = () => {
           buffer += decoder.decode(value, { stream: true });
           const events = buffer.split('\n\n');
           buffer = events.pop() || '';
-          if (events.some((event) => event.includes('event: update'))) {
-            loadContacts();
-            if (selectedRef.current?.id) loadMessages();
-          }
+          events.forEach((rawEvent) => {
+            if (!rawEvent.includes('event: update')) return;
+            const dataLine = rawEvent.split('\n').find((line) => line.startsWith('data:'));
+            try { queueUpdate(JSON.parse(dataLine?.slice(5).trim() || '{}')); } catch { queueUpdate({}); }
+          });
         }
       } catch (eventError) {
         if (eventError.name !== 'AbortError' && active) reconnectTimer = window.setTimeout(connect, 3000);
       }
     };
     connect();
-    return () => { active = false; controller.abort(); window.clearTimeout(reconnectTimer); };
+    return () => { active = false; controller.abort(); window.clearTimeout(reconnectTimer); window.clearTimeout(refreshTimer); };
   }, [loadContacts, loadMessages, sessionId]);
 
   useLayoutEffect(() => {

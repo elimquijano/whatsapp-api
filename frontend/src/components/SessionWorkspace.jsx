@@ -4,6 +4,7 @@ import {
 } from '@mui/material';
 import axios from 'axios';
 import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
+import useSmartPolling from '../hooks/useSmartPolling';
 
 const sections = ['crm', 'campaigns', 'send', 'api', 'ai'];
 
@@ -27,11 +28,7 @@ const SessionWorkspace = () => {
     }
   }, []);
 
-  useEffect(() => {
-    loadSessions();
-    const timer = window.setInterval(loadSessions, 10000);
-    return () => window.clearInterval(timer);
-  }, [loadSessions]);
+  useSmartPolling(loadSessions, 30000);
 
   const selected = useMemo(
     () => sessions.find((session) => session.sessionId === sessionId),

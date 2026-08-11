@@ -1,15 +1,16 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 
-import PublicDocumentation from './pages/PublicDocumentation';
-import Landing from './pages/Landing';
 import createAppTheme from './theme';
 import { ColorModeProvider, useColorMode } from './context/ColorModeContext';
+
+const Login = lazy(() => import('./pages/Login'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const PublicDocumentation = lazy(() => import('./pages/PublicDocumentation'));
+const Landing = lazy(() => import('./pages/Landing'));
 
 const ProtectedRoute = ({ children }) => {
   const { user } = useAuth();
@@ -40,26 +41,14 @@ const ThemedApplication = () => {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <Routes>
-          <Route path="/" element={<Landing />} />
-          <Route path="/docs" element={<PublicDocumentation />} />
-          <Route
-            path="/login"
-            element={
-              <PublicRoute>
-                <Login />
-              </PublicRoute>
-            }
-          />
-          <Route
-            path="/dashboard/*"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
-        </Routes>
+        <Suspense fallback={<div role="progressbar" aria-label="Cargando" />}>
+          <Routes>
+            <Route path="/" element={<Landing />} />
+            <Route path="/docs" element={<PublicDocumentation />} />
+            <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+            <Route path="/dashboard/*" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          </Routes>
+        </Suspense>
       </AuthProvider>
     </ThemeProvider>
   );

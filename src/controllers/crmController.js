@@ -109,7 +109,12 @@ export const listContacts = async (req, res) => {
     const where = { whatsappSessionId: session.id };
     if (req.query.status && statuses.has(req.query.status)) where.status = req.query.status;
     if (req.query.search) where[Op.or] = [{ name: { [Op.like]: `%${req.query.search}%` } }, { phone: { [Op.like]: `%${req.query.search}%` } }];
-    const storedContacts = await CrmContact.findAll({ where, order: [["priority", "DESC"], ["lastMessageAt", "DESC"]], limit: 500 });
+    const requestedLimit = Number(req.query.limit) || 150;
+    const storedContacts = await CrmContact.findAll({
+      where,
+      order: [["priority", "DESC"], ["lastMessageAt", "DESC"]],
+      limit: Math.min(500, Math.max(1, requestedLimit)),
+    });
     const contacts = storedContacts.filter((contact) => !isInternalLidJid(contact.contactJid));
     res.json({ success: true, sessionId: session.sessionId, contacts });
   } catch (error) { res.status(500).json({ success: false, error: error.message }); }
