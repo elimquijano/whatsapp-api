@@ -57,6 +57,42 @@ const importSourceForm = (source) => ({
   fieldMapping: JSON.stringify(source.fieldMapping || {}, null, 2),
 });
 
+const messageDate = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const daysAgo = Math.round((startOfToday - startOfDate) / 86400000);
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (daysAgo === 0) return time;
+  if (daysAgo === 1) return `Ayer, ${time}`;
+  const formattedDate = date.toLocaleDateString([], {
+    day: 'numeric',
+    month: 'short',
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
+  });
+  return `${formattedDate}, ${time}`;
+};
+
+const conversationDate = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const daysAgo = Math.round((startOfToday - startOfDate) / 86400000);
+  if (daysAgo === 0) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (daysAgo === 1) return 'Ayer';
+  return date.toLocaleDateString([], {
+    day: 'numeric',
+    month: 'short',
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: '2-digit' }),
+  });
+};
+
 const LinkifiedText = ({ children }) => String(children || '').split(/(https?:\/\/[^\s]+)/gi).map((part, index) => (
   /^https?:\/\//i.test(part)
     ? <Box component="a" key={`${part}-${index}`} href={part} target="_blank" rel="noreferrer" sx={{ color: 'inherit', textDecoration: 'underline' }}>{part}</Box>
@@ -127,7 +163,7 @@ const MessageList = memo(({ messages, sessionId, contactId, onReply }) => (
           <Box sx={{ bgcolor: outgoing ? '#d9fdd3' : '#fff', color: '#111b21', px: 1.25, pt: 0.75, pb: 0.5, borderRadius: 1.25, boxShadow: '0 1px 1px rgba(11,20,26,.13)' }}>
             <MessageContent item={item} sessionId={sessionId} contactId={contactId} />
             <Typography variant="caption" sx={{ display: 'block', textAlign: 'right', mt: 0.25, color: '#667781', fontSize: 10.5 }}>
-              {new Date(item.messageTimestamp || item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              {messageDate(item.messageTimestamp || item.createdAt)}
             </Typography>
           </Box>
           {item.canReply && <Tooltip title="Responder"><IconButton className="reply-action" size="small" onClick={() => onReply(item)} aria-label="Responder a este mensaje" sx={{ position: 'absolute', top: 2, [outgoing ? 'left' : 'right']: -32, opacity: 0, color: '#54656f', transition: 'opacity .1s', '&:focus-visible': { opacity: 1 } }}><Reply sx={{ fontSize: 17 }} /></IconButton></Tooltip>}
@@ -136,6 +172,48 @@ const MessageList = memo(({ messages, sessionId, contactId, onReply }) => (
     })}
   </Stack>
 ));
+
+const ChatComposer = memo(({ sending, replyingTo, onCancelReply, onSend }) => {
+  const [draft, setDraft] = useState('');
+  const [attachment, setAttachment] = useState(null);
+
+  const submit = async () => {
+    if (sending || (!draft.trim() && !attachment)) return;
+    const sent = await onSend(draft, attachment);
+    if (sent) {
+      setDraft('');
+      setAttachment(null);
+    }
+  };
+
+  return (
+    <Box sx={{ p: 1.25, display: 'flex', alignItems: 'flex-end', gap: 1, bgcolor: 'background.paper', borderTop: 1, borderColor: 'divider', position: { xs: 'sticky', lg: 'static' }, bottom: 0, zIndex: 2 }}>
+      <IconButton component="label" disabled={sending} aria-label="Adjuntar archivo" sx={{ mb: 2.75, border: 1, borderColor: 'divider' }}>
+        <AttachFile />
+        <input hidden type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" onChange={(event) => {
+          const file = event.target.files?.[0] || null;
+          if (file?.size > 10 * 1024 * 1024) return;
+          setAttachment(file);
+        }} />
+      </IconButton>
+      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+        {(replyingTo || attachment) && <Paper variant="outlined" sx={{ mb: 0.75, px: 1, py: 0.5 }}>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+              {replyingTo && <Typography variant="caption" noWrap component="div">Respondiendo a: {replyingTo.content || replyingTo.messageType}</Typography>}
+              {attachment && <Typography variant="caption" noWrap component="div">Adjunto: {attachment.name}</Typography>}
+            </Box>
+            <IconButton size="small" onClick={() => { onCancelReply(); setAttachment(null); }} aria-label="Quitar respuesta y adjunto"><Close fontSize="small" /></IconButton>
+          </Stack>
+        </Paper>}
+        <TextField fullWidth multiline maxRows={4} size="small" placeholder="Escribe una respuesta…" helperText="Al enviar, este chat pasará a atención humana." value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); } }} />
+      </Box>
+      <IconButton color="primary" disabled={sending || (!draft.trim() && !attachment)} onClick={submit} aria-label="Enviar mensaje" sx={{ mb: 2.75, border: 1, borderColor: 'divider' }}>
+        {sending ? <CircularProgress size={22} /> : <Send />}
+      </IconButton>
+    </Box>
+  );
+});
 
 const CrmInbox = () => {
   const theme = useTheme();
@@ -147,10 +225,8 @@ const CrmInbox = () => {
   const [messages, setMessages] = useState([]);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
-  const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
-  const [attachment, setAttachment] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
   const [sessionAutomationSaving, setSessionAutomationSaving] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -177,8 +253,6 @@ const CrmInbox = () => {
     setSelected(null);
     selectedRef.current = null;
     setMessages([]);
-    setDraft('');
-    setAttachment(null);
     setReplyingTo(null);
     setImportOpen(false);
     setMobilePanel('contacts');
@@ -417,10 +491,9 @@ const CrmInbox = () => {
     }
   };
 
-  const sendMessage = async () => {
+  const sendMessage = async (content, attachment) => {
     const target = selectedRef.current;
-    const content = draft;
-    if ((!content.trim() && !attachment) || !target?.id) return;
+    if ((!content.trim() && !attachment) || !target?.id) return false;
     const contactId = String(target.id);
     const optimisticId = `pending-${Date.now()}`;
     setError('');
@@ -445,10 +518,6 @@ const CrmInbox = () => {
         quotedMessageId: replyingTo?.id,
         ...media,
       });
-      setDraft((current) => (
-        String(selectedRef.current?.id) === contactId && current === content ? '' : current
-      ));
-      setAttachment(null);
       setReplyingTo(null);
       setSelected((current) => {
         if (String(current?.id) !== contactId) return current;
@@ -461,9 +530,11 @@ const CrmInbox = () => {
       )));
       if (data.message) setMessages((current) => current.map((item) => item.id === optimisticId ? data.message : item));
       window.setTimeout(() => { loadMessages(); loadContacts(); }, 250);
+      return true;
     } catch (err) {
       setMessages((current) => current.filter((item) => item.id !== optimisticId));
       setError(err.response?.data?.error || 'No se pudo enviar el mensaje');
+      return false;
     }
     finally { setSending(false); }
   };
@@ -492,8 +563,6 @@ const CrmInbox = () => {
     setSelected(contact);
     selectedRef.current = contact;
     setMessages([]);
-    setDraft('');
-    setAttachment(null);
     setReplyingTo(null);
     setMobilePanel('chat');
   };
@@ -685,7 +754,7 @@ const CrmInbox = () => {
                       <Stack direction="row" alignItems="baseline" spacing={1}>
                         <Typography variant="subtitle2" noWrap sx={{ flexGrow: 1 }}>{contact.name || contact.phone}</Typography>
                         <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
-                          {contact.lastMessageAt ? new Date(contact.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                          {conversationDate(contact.lastMessageAt)}
                         </Typography>
                       </Stack>
                       <Typography variant="body2" color="text.secondary" noWrap>{contact.lastMessagePreview || 'Sin mensajes'}</Typography>
@@ -782,62 +851,13 @@ const CrmInbox = () => {
                   <MessageList messages={messages} sessionId={sessionId} contactId={selected.id} onReply={setReplyingTo} />
                 </Box>
 
-                <Box sx={{
-                  p: 1.25,
-                  display: 'flex',
-                  alignItems: 'flex-end',
-                  gap: 1,
-                  bgcolor: 'background.paper',
-                  borderTop: 1,
-                  borderColor: 'divider',
-                  position: { xs: 'sticky', lg: 'static' },
-                  bottom: 0,
-                  zIndex: 2,
-                }}>
-                  <IconButton component="label" disabled={sending} aria-label="Adjuntar archivo" sx={{ mb: 2.75, border: 1, borderColor: 'divider' }}>
-                    <AttachFile />
-                    <input hidden type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" onChange={(event) => {
-                      const file = event.target.files?.[0] || null;
-                      if (file && file.size > 10 * 1024 * 1024) {
-                        setError('El archivo supera el límite de 10 MB');
-                        event.target.value = '';
-                        return;
-                      }
-                      setAttachment(file);
-                    }} />
-                  </IconButton>
-                  <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                    {(replyingTo || attachment) && <Paper variant="outlined" sx={{ mb: 0.75, px: 1, py: 0.5 }}>
-                      <Stack direction="row" alignItems="center" spacing={1}>
-                        <Box sx={{ minWidth: 0, flexGrow: 1 }}>
-                          {replyingTo && <Typography variant="caption" noWrap component="div">Respondiendo a: {replyingTo.content || replyingTo.messageType}</Typography>}
-                          {attachment && <Typography variant="caption" noWrap component="div">Adjunto: {attachment.name}</Typography>}
-                        </Box>
-                        <IconButton size="small" onClick={() => { setReplyingTo(null); setAttachment(null); }} aria-label="Quitar respuesta y adjunto"><Close fontSize="small" /></IconButton>
-                      </Stack>
-                    </Paper>}
-                  <TextField
-                    fullWidth
-                    multiline
-                    maxRows={4}
-                    size="small"
-                    placeholder="Escribe una respuesta…"
-                    helperText="Al enviar, este chat pasará a atención humana."
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); } }}
-                  />
-                  </Box>
-                  <IconButton
-                    color="primary"
-                    disabled={sending || (!draft.trim() && !attachment)}
-                    onClick={sendMessage}
-                    aria-label="Enviar mensaje"
-                    sx={{ mb: 2.75, border: 1, borderColor: 'divider' }}
-                  >
-                    {sending ? <CircularProgress size={22} /> : <Send />}
-                  </IconButton>
-                </Box>
+                <ChatComposer
+                  key={selected.id}
+                  sending={sending}
+                  replyingTo={replyingTo}
+                  onCancelReply={() => setReplyingTo(null)}
+                  onSend={sendMessage}
+                />
               </>
             )}
           </Box>
