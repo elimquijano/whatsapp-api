@@ -10,6 +10,7 @@ import {
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import useSmartPolling from '../hooks/useSmartPolling';
 
 const WhatsAppConnector = () => {
   const { user } = useAuth();
@@ -40,11 +41,7 @@ const WhatsAppConnector = () => {
     }
   }, []);
 
-  useEffect(() => {
-    fetchSessions();
-    const interval = setInterval(fetchSessions, 5000);
-    return () => clearInterval(interval);
-  }, [fetchSessions]);
+  useSmartPolling(fetchSessions, 15000);
 
   const connectNew = async () => {
     setActionLoading(true);
