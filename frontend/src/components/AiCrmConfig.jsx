@@ -8,13 +8,14 @@ import { useTheme } from '@mui/material/styles';
 import {
   Add, AutoAwesome, CenterFocusStrong, CheckCircle, Close, Code, Delete,
   ErrorOutline, History, HourglassEmpty, Hub, Http, Link, PlayArrow, Psychology,
-  Refresh, Save, Send, Settings, SkipNext, Tune, ZoomIn, ZoomOut
+  Download, Refresh, Save, Send, Settings, SkipNext, Tune, Upload, ZoomIn, ZoomOut
 } from '@mui/icons-material';
 import axios from 'axios';
 import JsonDataTree from './workflow/JsonDataTree';
 import MainWorkflowEditor from './workflow/MainWorkflowEditor';
 import AgentWorkflowCanvas from './workflow/AgentWorkflowCanvas';
 import AgentStudio from './workflow/AgentStudio';
+import { createWorkflowBundle, parseWorkflowBundle } from '../utils/workflowTransfer';
 
 const nodeCatalog = [
   { type: 'agent_input', label: 'Entrada del agente', icon: <Send sx={{ transform: 'rotate(180deg)' }} />, color: '#16a34a', fixed: true },
@@ -552,6 +553,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
   const globalCanvasRef = useRef(null);
   const globalDragRef = useRef(null);
   const latestExecutionIdRef = useRef('');
+  const importInputRef = useRef(null);
 
   const permission = config.permissions?.[permissionIndex];
   const selectedNode = permission?.nodes?.find((node) => node.key === selectedNodeKey);
@@ -937,6 +939,39 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
     finally { setLoading(false); }
   };
 
+  const exportWorkflows = () => {
+    const bundle = createWorkflowBundle(config, sessionId);
+    const blob = new Blob([`${JSON.stringify(bundle, null, 2)}\n`], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `workflows-${String(sessionId || 'cuenta').replace(/[^a-z0-9_-]+/gi, '-')}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setMessage({ type: 'success', text: 'Workflows exportados sin tokens ni credenciales privadas.' });
+  };
+
+  const importWorkflows = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const imported = parseWorkflowBundle(await file.text());
+      const permissions = imported.permissions.map(normalizePermission);
+      setConfig((current) => ({ ...current, permissions, mainWorkflow: imported.mainWorkflow }));
+      setPermissionIndex(0);
+      setSelectedNodeKey('');
+      setGlobalSelectedNodeKey('orchestrator');
+      setActiveExecution(null);
+      setMessage({
+        type: 'success',
+        text: `Se importaron ${permissions.length} agente(s)${imported.sourceSessionId ? ` desde ${imported.sourceSessionId}` : ''}. Revisa las credenciales y pulsa Guardar para aplicarlos a esta sesión.`,
+      });
+    } catch (error) {
+      setMessage({ type: 'error', text: error.message || 'No se pudo importar el archivo' });
+    }
+  };
+
   const runTest = async () => {
     if (!permission?.key) return;
     setTesting(true);
@@ -1108,6 +1143,9 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
         <AutoAwesome color="primary" /> IA CRM · sesión {sessionId}
         <Chip size="small" label="Plan Profesional" color="secondary" />
         <Box sx={{ flexGrow: 1 }} />
+        <input ref={importInputRef} type="file" accept="application/json,.json" hidden onChange={importWorkflows} />
+        <Tooltip title="Descarga agentes y workflow principal; nunca incluye tokens ni credenciales"><Button startIcon={<Download />} onClick={exportWorkflows} disabled={loading}>Exportar</Button></Tooltip>
+        <Tooltip title="Reemplaza el borrador actual; podrás revisarlo antes de guardar"><Button startIcon={<Upload />} onClick={() => importInputRef.current?.click()} disabled={loading}>Importar</Button></Tooltip>
         <Button startIcon={<AutoAwesome />} onClick={applyPreset} disabled={loading}>Restaurar configuración inicial</Button>
         {pageMode && <Button variant="contained" startIcon={<Save />} disabled={loading} onClick={save}>{loading ? 'Guardando...' : 'Guardar cambios'}</Button>}
         <Tooltip title={pageMode ? 'Volver al panel' : 'Cerrar'}><IconButton onClick={onClose}><Close /></IconButton></Tooltip>
