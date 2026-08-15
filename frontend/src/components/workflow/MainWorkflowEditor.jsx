@@ -374,7 +374,7 @@ const EditorInner = ({ workflow, permissions, nodeStates, activeExecution, onCha
       <style>{`@keyframes mainEdgeDash{to{stroke-dashoffset:-30}} @keyframes mainNodePulse{0%,100%{box-shadow:0 0 0 3px rgba(59,130,246,.10)}50%{box-shadow:0 0 0 10px rgba(59,130,246,.20)}}`}</style>
       <ReactFlow
         nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
-        onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
+        onNodesChange={(changes) => onNodesChange(changes.filter((change) => change.type !== 'remove'))} onEdgesChange={onEdgesChange} onConnect={onConnect}
         onNodeClick={(_, node) => setSelectedNodeId(node.id)} onPaneClick={() => setSelectedNodeId('')}
         onNodeDragStart={() => { draggingRef.current = true; }}
         onNodeDragStop={(_, movedNode) => {
@@ -384,12 +384,11 @@ const EditorInner = ({ workflow, permissions, nodeStates, activeExecution, onCha
           commit(nextNodes, edges);
         }}
         onEdgesDelete={(deleted) => { const ids = new Set(deleted.map((edge) => edge.id)); const next = edges.filter((edge) => !ids.has(edge.id)); setEdges(next); commit(nodes, next); }}
-        onNodesDelete={(deleted) => deleted.filter((node) => node.data.type === 'agent').forEach((node) => deleteAgent(node.id))}
         onMoveEnd={(_, viewport) => onChange(serialize(workflow, nodes, edges, viewport))}
         isValidConnection={(connection) => allowedConnection(connection, nodeMap)}
         onPaneContextMenu={(event) => { event.preventDefault(); openAgentCreator(event, screenToFlowPosition({ x: event.clientX, y: event.clientY })); }}
         defaultViewport={workflow?.viewport || { x: 0, y: 0, zoom: 0.85 }} minZoom={0.25} maxZoom={1.8}
-        deleteKeyCode={['Backspace', 'Delete']} selectionKeyCode="Shift" multiSelectionKeyCode="Control"
+        nodesDeletable={false} deleteKeyCode={['Backspace', 'Delete']} selectionKeyCode="Shift" multiSelectionKeyCode="Control"
         fitView={!workflow?.viewport} proOptions={{ hideAttribution: true }}
       >
         <Background gap={22} size={1.2} />
