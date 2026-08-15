@@ -79,6 +79,7 @@ La credencial autentica la cuenta y `:sessionId` delimita siempre la sesión de 
 - `POST /api/v1/sessions/:sessionId/messages/text|media`: Envía desde la sesión indicada.
   En `media`, `type` puede ser `image`, `video`, `audio` o `document`; el archivo se entrega como URL/data URI en `payload` o como Base64 puro en `base64` junto con `mimetype` (máximo 10 MB).
 - `GET|PUT /api/v1/sessions/:sessionId/ai/config`: Consulta o guarda los agentes y workflows de una sesión Profesional.
+- Los workflows actualmente se ejecutan y persisten por sesión. Desde el editor IA CRM se pueden **exportar e importar** como JSON para reutilizarlos entre cualquier sesión de la misma cuenta; el archivo nunca incluye tokens ni credenciales de nodos, que deben configurarse de nuevo en la sesión de destino.
 - `PUT /api/v1/sessions/:sessionId/ai/toggle`: Cambia la automatización de esa sesión.
 - `GET /api/v1/sessions/:sessionId/crm/contacts`: Lista los contactos de esa sesión.
 - `PUT|POST /api/v1/sessions/:sessionId/crm/contacts/:contactId/...`: Administra un contacto dentro de su sesión.
