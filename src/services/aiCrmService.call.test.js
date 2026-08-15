@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import aiCrmService, { callNotificationDetails, hasSendableWorkflowContent, retrieveRelevantContext, selectRelevantHistory, simpleTurnAnalysis } from "./aiCrmService.js";
+import aiCrmService, { callNotificationDetails, ensureLastUserMessage, hasSendableWorkflowContent, retrieveRelevantContext, selectRelevantHistory, simpleTurnAnalysis } from "./aiCrmService.js";
 
 test("convierte una llamada sin respuesta en notificación perdida", () => {
   assert.deepEqual(callNotificationDetails({ status: "timeout", isVideo: false }), {
@@ -67,6 +67,13 @@ test("respeta la cantidad configurable de mensajes recientes", () => {
   const fiveRecent = selectRelevantHistory(history, 2000, 5);
   assert.deepEqual(twoRecent.map(({ content }) => content), contents.slice(-2));
   assert.deepEqual(fiveRecent.map(({ content }) => content), contents.slice(-5));
+});
+
+test("garantiza que las solicitudes compatibles con OpenAI terminen con un mensaje de usuario", () => {
+  const alreadyValid = [{ role: "user", content: "hola" }];
+  assert.deepEqual(ensureLastUserMessage(alreadyValid), alreadyValid);
+  assert.equal(ensureLastUserMessage([]).at(-1).role, "user");
+  assert.equal(ensureLastUserMessage([{ role: "assistant", content: "respuesta previa" }]).at(-1).role, "user");
 });
 
 test("la entrada de una tarea no recibe el historial reservado al orquestador", async () => {

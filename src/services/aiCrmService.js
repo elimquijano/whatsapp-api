@@ -275,6 +275,14 @@ export const selectRelevantHistory = (messages = [], budget = 1600, recentCount 
   return compactModelMessages([...indexes].sort((a, b) => a - b).map((index) => history[index]), budget, 450);
 };
 
+export const ensureLastUserMessage = (messages = []) => {
+  const normalized = Array.isArray(messages) ? [...messages] : [];
+  if (normalized.at(-1)?.role !== "user") {
+    normalized.push({ role: "user", content: "Ejecuta la tarea indicada y devuelve únicamente el resultado solicitado." });
+  }
+  return normalized;
+};
+
 const normalizedTerms = (value) => new Set(String(value || "").toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
   .match(/[a-z0-9]{3,}/g) || []);
@@ -1399,12 +1407,12 @@ class AiCrmService {
         model: config.aiModel,
         temperature: retry ? Math.min(Number(config.temperature ?? 0.2), 0.2) : (config.temperature ?? 0.2),
         max_tokens: maxOutputTokens,
-        messages: [{
+        messages: ensureLastUserMessage([{
           role: "system",
           content: retry
             ? `${compactSystem}\n\nDevuelve un unico objeto JSON valido, sin markdown, comentarios ni bloques <think>.`
             : compactSystem,
-        }, ...compactMessages],
+        }, ...compactMessages]),
       };
       const provider = configuredProvider;
       const model = configuredModel;
