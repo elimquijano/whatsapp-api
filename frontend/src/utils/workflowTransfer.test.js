@@ -4,6 +4,7 @@ import { createWorkflowBundle, parseWorkflowBundle, WORKFLOW_BUNDLE_FORMAT } fro
 
 test('exports portable workflows without database ids or credentials', () => {
   const bundle = createWorkflowBundle({
+    agentName: 'Ada', systemPrompt: 'Reglas', context: 'Catálogo', aiProvider: 'groq', aiModel: 'groq/compound', aiApiToken: 'top-secret',
     permissions: [{ id: 4, key: 'ventas', nodes: [{ id: 8, key: 'crm', credentials: { apiToken: 'secret' } }], edges: [{ id: 9, source: 'a', target: 'b' }] }],
     mainWorkflow: { id: 10, nodes: [{ id: 11, key: 'agent_ventas' }], edges: [] },
   }, 'sesion-a');
@@ -14,6 +15,9 @@ test('exports portable workflows without database ids or credentials', () => {
   assert.equal(bundle.workflow.permissions[0].nodes[0].id, undefined);
   assert.deepEqual(bundle.workflow.permissions[0].nodes[0].credentials, {});
   assert.equal(bundle.workflow.mainWorkflow.id, undefined);
+  assert.equal(bundle.config.aiModel, 'groq/compound');
+  assert.equal(bundle.config.systemPrompt, 'Reglas');
+  assert.equal(bundle.config.aiApiToken, undefined);
 });
 
 test('imports a bundle as new records and rejects invalid files', () => {
@@ -24,4 +28,11 @@ test('imports a bundle as new records and rejects invalid files', () => {
   assert.equal(parseWorkflowBundle(JSON.stringify(bundle)).permissions[0].key, 'soporte');
   assert.throws(() => parseWorkflowBundle('{}'), /no es un paquete/);
   assert.throws(() => parseWorkflowBundle('{'), /JSON válido/);
+});
+
+test('imports legacy v1 bundles without overwriting general configuration', () => {
+  const legacy = createWorkflowBundle({ permissions: [], mainWorkflow: { nodes: [], edges: [] } });
+  legacy.version = 1;
+  delete legacy.config;
+  assert.deepEqual(parseWorkflowBundle(JSON.stringify(legacy)).config, {});
 });

@@ -224,7 +224,6 @@ const defaultAgentInputFields = () => ([
   { name: 'arguments', type: 'object', required: false, description: 'Campos extraídos o mapeados por el orquestador', source: 'arguments' },
   { name: 'analysis', type: 'object', required: true, description: 'Resultado del filtro de interacción', source: 'analysis' },
   { name: 'state', type: 'object', required: false, description: 'Estado acumulado de la tarea', source: 'state' },
-  { name: 'history', type: 'array', required: false, description: 'Historial reciente del chat', source: 'history' },
   { name: 'session', type: 'object', required: true, description: 'Sesión actual', source: 'session' },
   { name: 'task', type: 'object', required: true, description: 'Agente seleccionado y sus instrucciones', source: 'task' },
 ]);
@@ -285,7 +284,7 @@ Reglas:
     key: 'responder', name: 'Responder', enabled: true, priority: 0,
     description: 'Saludos, consultas generales y conversaciones que no corresponden a otra tarea especializada.',
     routingPrompt: 'Usar cuando la solicitud puede resolverse con el contexto configurado y no corresponde a otra tarea disponible.',
-    executionPrompt: 'Usa el contexto configurado como fuente de verdad y el historial únicamente para mantener continuidad. No inventes información ni sustituyas una tarea especializada.',
+    executionPrompt: 'Ejecuta únicamente esta tarea con los argumentos del orquestador y el contexto relevante. No reclasifiques la conversación ni inventes información.',
     responsePrompt: 'Entrega una respuesta breve, útil y natural para WhatsApp.', continuationEnabled: false,
     stateSchema: {
       inputFields: defaultAgentInputFields(),
@@ -293,7 +292,7 @@ Reglas:
     },
     nodes: [
       { key: 'entrada_agente', name: 'Entrada del agente', type: 'agent_input', enabled: true, positionX: 80, positionY: 180, config: {}, credentials: {} },
-      { key: 'redactar_respuesta', name: 'Redactar con IA', type: 'ai', enabled: true, positionX: 400, positionY: 180, config: { useSessionModel: true, outputField: 'content', inputMapping: {}, contextCharBudget: 3000, historyCharBudget: 1800, maxOutputTokens: 400, outputFields: [{ name: 'content', type: 'string', source: 'content', required: true }, { name: 'stateUpdates', type: 'object', source: 'stateUpdates' }, { name: 'taskComplete', type: 'boolean', source: 'taskComplete' }], prompt: 'Redacta una respuesta usando el contexto configurado como fuente de verdad y el historial solo para continuidad. No inventes información ni sustituyas otra tarea disponible.' }, credentials: {} },
+      { key: 'redactar_respuesta', name: 'Redactar con IA', type: 'ai', enabled: true, positionX: 400, positionY: 180, config: { useSessionModel: true, outputField: 'content', inputMapping: {}, contextCharBudget: 3000, maxOutputTokens: 400, outputFields: [{ name: 'content', type: 'string', source: 'content', required: true }, { name: 'stateUpdates', type: 'object', source: 'stateUpdates' }, { name: 'taskComplete', type: 'boolean', source: 'taskComplete' }], prompt: 'Redacta la respuesta usando los argumentos ya seleccionados y el contexto relevante. Haz únicamente esta tarea.' }, credentials: {} },
       { key: 'salida_agente', name: 'Salida del agente', type: 'agent_output', enabled: true, positionX: 720, positionY: 180, config: { outputMapping: { content: '{{nodes.redactar_respuesta.content}}', state: '{{state}}', evidence: '{{evidence}}', nodes: '{{nodes}}' } }, credentials: {} },
     ],
     edges: [
@@ -854,7 +853,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
       transform: { inputMapping: {}, outputFields: [{ name: 'value', type: 'any', source: 'value' }], expression: 'input.nodeInput' },
       state_update: { inputMapping: {}, outputFields: [{ name: 'stateUpdates', type: 'object', source: 'stateUpdates' }, { name: 'taskComplete', type: 'boolean', source: 'taskComplete' }], updates: {}, taskComplete: false },
       condition: { inputMapping: {}, outputFields: [{ name: 'result', type: 'boolean', source: 'result' }], condition: { leftPath: 'nodeInput.confirmado', operator: 'equals', rightValue: true, rightType: 'boolean' }, expression: 'input.nodeInput.confirmado === true' },
-      ai: { inputMapping: {}, outputFields: [{ name: 'content', type: 'string', source: 'content', required: true }, { name: 'stateUpdates', type: 'object', source: 'stateUpdates' }, { name: 'taskComplete', type: 'boolean', source: 'taskComplete' }], useSessionModel: true, provider: 'openai_compatible', apiUrl: '', model: '', outputField: 'content', contextCharBudget: 3000, historyCharBudget: 1800, maxOutputTokens: 400, prompt: 'Procesa la información disponible y genera la respuesta de este agente.' },
+      ai: { inputMapping: {}, outputFields: [{ name: 'content', type: 'string', source: 'content', required: true }, { name: 'stateUpdates', type: 'object', source: 'stateUpdates' }, { name: 'taskComplete', type: 'boolean', source: 'taskComplete' }], useSessionModel: true, provider: 'openai_compatible', apiUrl: '', model: '', outputField: 'content', contextCharBudget: 3000, maxOutputTokens: 400, prompt: 'Procesa únicamente la entrada de esta tarea y genera su resultado.' },
       agent_output: { outputMapping: { content: `{{nodes.${latestAiNode?.key || 'modelo_ia'}.content}}`, state: '{{state}}', evidence: '{{evidence}}', nodes: '{{nodes}}' } },
       whatsapp_output: { contentTemplate: `{{nodes.${latestAiNode?.key || 'modelo_ia'}.content}}` },
     }[type];
@@ -948,7 +947,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
     anchor.download = `workflows-${String(sessionId || 'cuenta').replace(/[^a-z0-9_-]+/gi, '-')}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
-    setMessage({ type: 'success', text: 'Workflows exportados sin tokens ni credenciales privadas.' });
+    setMessage({ type: 'success', text: 'Cerebro, prompts, configuración y workflows exportados sin tokens ni credenciales privadas.' });
   };
 
   const importWorkflows = async (event) => {
@@ -958,14 +957,14 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
     try {
       const imported = parseWorkflowBundle(await file.text());
       const permissions = imported.permissions.map(normalizePermission);
-      setConfig((current) => ({ ...current, permissions, mainWorkflow: imported.mainWorkflow }));
+      setConfig((current) => ({ ...current, ...imported.config, permissions, mainWorkflow: imported.mainWorkflow, aiApiToken: '' }));
       setPermissionIndex(0);
       setSelectedNodeKey('');
       setGlobalSelectedNodeKey('orchestrator');
       setActiveExecution(null);
       setMessage({
         type: 'success',
-        text: `Se importaron ${permissions.length} agente(s)${imported.sourceSessionId ? ` desde ${imported.sourceSessionId}` : ''}. Revisa las credenciales y pulsa Guardar para aplicarlos a esta sesión.`,
+        text: `Se importaron el Cerebro y ${permissions.length} agente(s)${imported.sourceSessionId ? ` desde ${imported.sourceSessionId}` : ''}. Revisa la clave API y pulsa Guardar para aplicarlos a esta sesión.`,
       });
     } catch (error) {
       setMessage({ type: 'error', text: error.message || 'No se pudo importar el archivo' });
@@ -1144,7 +1143,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
         <Chip size="small" label="Plan Profesional" color="secondary" />
         <Box sx={{ flexGrow: 1 }} />
         <input ref={importInputRef} type="file" accept="application/json,.json" hidden onChange={importWorkflows} />
-        <Tooltip title="Descarga agentes y workflow principal; nunca incluye tokens ni credenciales"><Button startIcon={<Download />} onClick={exportWorkflows} disabled={loading}>Exportar</Button></Tooltip>
+        <Tooltip title="Descarga Cerebro, prompts, agentes y workflow principal; nunca incluye tokens ni credenciales"><Button startIcon={<Download />} onClick={exportWorkflows} disabled={loading}>Exportar todo</Button></Tooltip>
         <Tooltip title="Reemplaza el borrador actual; podrás revisarlo antes de guardar"><Button startIcon={<Upload />} onClick={() => importInputRef.current?.click()} disabled={loading}>Importar</Button></Tooltip>
         <Button startIcon={<AutoAwesome />} onClick={applyPreset} disabled={loading}>Restaurar configuración inicial</Button>
         {pageMode && <Button variant="contained" startIcon={<Save />} disabled={loading} onClick={save}>{loading ? 'Guardando...' : 'Guardar cambios'}</Button>}
@@ -1182,15 +1181,12 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
                 <Grid item xs={12}><Button size="small" startIcon={<Settings />} onClick={() => setShowAdvanced((value) => !value)}>{showAdvanced ? 'Ocultar opciones avanzadas' : 'Mostrar opciones avanzadas'}</Button></Grid>
                 {showAdvanced && <>
                   <Grid item xs={12}><TextField fullWidth multiline minRows={3} label="Prompt general" value={config.systemPrompt || ''} onChange={(event) => setField('systemPrompt', event.target.value)} helperText="Reglas generales de comportamiento y seguridad del agente." /></Grid>
-                  <Grid item xs={12}><TextField fullWidth multiline minRows={4} label="Prompt de preanálisis" value={config.intentionPrompt || ''} onChange={(event) => setField('intentionPrompt', event.target.value)} helperText="Decide si debe responder y extrae intención, tema, entidades y continuidad. Variables: {{history}}, {{lastMessage}}, {{previousAnalysis}}, {{activeTask}} y {{state}}." /></Grid>
-                  <Grid item xs={12}><TextField fullWidth multiline minRows={4} label="Prompt del orquestador" value={config.orchestrationPrompt || ''} onChange={(event) => setField('orchestrationPrompt', event.target.value)} helperText="Solo se usa cuando hay 2 o más tareas. Variables: {{availableTasks}}, {{taskKeys}}, {{analysis}}, {{activeTask}}, {{state}}, {{history}} y {{lastMessage}}." /></Grid>
-                  <Grid item xs={12}><TextField fullWidth multiline minRows={4} label="Validador anti-alucinaciones" value={config.responseGuardPrompt || ''} onChange={(event) => setField('responseGuardPrompt', event.target.value)} helperText="Revisa contra las fuentes de verdad: contexto y resultados HTTP. El historial solo aporta continuidad." /></Grid>
+                  <Grid item xs={12}><TextField fullWidth multiline minRows={4} label="Reglas para decidir si responder" value={config.intentionPrompt || ''} onChange={(event) => setField('intentionPrompt', event.target.value)} helperText="Se evalúan junto al enrutamiento en una única llamada IA compacta." /></Grid>
+                  <Grid item xs={12}><TextField fullWidth multiline minRows={4} label="Reglas del orquestador" value={config.orchestrationPrompt || ''} onChange={(event) => setField('orchestrationPrompt', event.target.value)} helperText="Decide la tarea en la misma llamada que filtra el mensaje; no duplica historial ni contexto." /></Grid>
                   <Grid item xs={12} md={6}><FormControlLabel control={<Switch checked={config.ignoreUnrelatedMessages !== false} onChange={(event) => setField('ignoreUnrelatedMessages', event.target.checked)} />} label="Ignorar mensajes ajenos al negocio" /></Grid>
-                  <Grid item xs={12} md={6}><FormControlLabel control={<Switch checked={config.responseValidationEnabled !== false} onChange={(event) => setField('responseValidationEnabled', event.target.checked)} />} label="Validar respuesta antes de enviarla" /></Grid>
-                  <Grid item xs={12} md={4}><TextField select fullWidth label="Si el validador falla" value={config.responseValidationFailureMode || 'block'} onChange={(event) => setField('responseValidationFailureMode', event.target.value)}><MenuItem value="block">Bloquear el envío</MenuItem><MenuItem value="use_proposed">Enviar la respuesta propuesta</MenuItem></TextField></Grid>
                   <Grid item xs={12} md={8}><TextField fullWidth label="URL API IA" value={config.aiApiUrl || ''} onChange={(event) => setField('aiApiUrl', event.target.value)} helperText="Se completa automáticamente al elegir OpenAI, Groq o Gemini." /></Grid>
                   <Grid item xs={6} md={2}><TextField fullWidth type="number" label="Temperatura" value={config.temperature ?? 0.2} onChange={(event) => setField('temperature', Number(event.target.value))} /></Grid>
-                  <Grid item xs={6} md={2}><TextField fullWidth type="number" label="Memoria" value={config.maxHistory || 20} onChange={(event) => setField('maxHistory', Number(event.target.value))} helperText="Últimos mensajes" /></Grid>
+                  <Grid item xs={6} md={2}><TextField fullWidth type="number" label="Mensajes recientes" value={config.maxHistory || 20} onChange={(event) => setField('maxHistory', Number(event.target.value))} inputProps={{ min: 1, max: 100 }} helperText="Cantidad configurable; después se compactan al presupuesto de tokens" /></Grid>
                 </>}
               </Grid>
             </Stack>
@@ -1606,14 +1602,9 @@ const GlobalNodeInspector = ({ node, nodeState, trace, permission, linkedPermiss
           </TextField>
         </>}
         {node.type === 'response_guard' && <>
-          <FormControlLabel control={<Switch checked={node.config?.enabled !== false} onChange={(event) => setNodeConfig({ enabled: event.target.checked })} />} label="Validación habilitada" />
-          <DroppableTextField fullWidth multiline minRows={8} label="Prompt de validación" value={node.config?.prompt || ''} onChange={(event) => setNodeConfig({ prompt: event.target.value })} helperText="Vacío: usa el prompt de validación de la sección 1. Puedes arrastrar una ruta real desde Entrada o Salida hacia Parámetros." />
-          <TextField select fullWidth label="Si falla la validación" value={node.config?.failureMode || 'block'} onChange={(event) => setNodeConfig({ failureMode: event.target.value })}>
-            <MenuItem value="block">Bloquear el envío</MenuItem>
-            <MenuItem value="use_proposed">Usar la respuesta propuesta</MenuItem>
-          </TextField>
+          <Alert severity="info">Nodo heredado. La salida ahora se protege mediante contratos, evidencia autorizada y plantilla, sin una llamada adicional al modelo.</Alert>
         </>}
-        {node.type === 'whatsapp_output' && <DroppableTextField fullWidth multiline minRows={8} label="Plantilla del contenido final" value={node.config?.contentTemplate || ''} onChange={(event) => setNodeConfig({ contentTemplate: event.target.value })} helperText="Vacío: conserva el contenido final producido por la validación. Puedes arrastrar una ruta real desde Entrada o Salida hacia Parámetros." />}
+        {node.type === 'whatsapp_output' && <DroppableTextField fullWidth multiline minRows={8} label="Plantilla del contenido final" value={node.config?.contentTemplate || ''} onChange={(event) => setNodeConfig({ contentTemplate: event.target.value })} helperText="Vacío: conserva el contenido producido por el agente. Puedes arrastrar una ruta real desde Entrada o Salida hacia Parámetros." />}
         {node.type === 'task_subworkflow' && <>
           <TextField fullWidth label="Tarea vinculada" value={node.config?.taskKey || ''} InputProps={{ readOnly: true }} />
           <JsonField label="Mapeo de entrada" value={node.config?.inputMapping || {}} onChange={(inputMapping) => setNodeConfig({ inputMapping })} rows={7} helperText="Mapea variables reales del workflow hacia los contratos de entrada de la tarea." />

@@ -225,17 +225,16 @@ const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, 
         {node.type === 'ai' && <>
           <Alert severity="info" icon={false}>
             {Object.keys(config.inputMapping || {}).length
-              ? <><b>Contexto controlado:</b> la IA recibe los campos mapeados arriba, el historial reciente compactado y el contexto general.</>
+              ? <><b>Contexto controlado:</b> la IA recibe los campos mapeados y los fragmentos relevantes del contexto general; el historial queda exclusivamente en el orquestador.</>
               : <><b>Contexto automatico:</b> la IA recibe solo la salida del nodo conectado inmediatamente antes. No se envian por defecto todos los resultados anteriores.</>}
           </Alert>
           <TextField select size="small" fullWidth label="Modelo" value={config.useSessionModel === false ? 'custom' : 'session'} onChange={(event) => updateConfig({ useSessionModel: event.target.value === 'session' })}><MenuItem value="session">Usar modelo del Cerebro general</MenuItem><MenuItem value="custom">Modelo propio del nodo</MenuItem></TextField>
           {config.useSessionModel === false && <><TextField size="small" fullWidth label="URL del proveedor" value={config.apiUrl || ''} onChange={(event) => updateConfig({ apiUrl: event.target.value })} /><TextField size="small" fullWidth label="Modelo" value={config.model || ''} onChange={(event) => updateConfig({ model: event.target.value })} /></>}
           <DroppableText multiline minRows={9} fullWidth label="Prompt del agente" value={config.prompt || ''} onChange={(event) => updateConfig({ prompt: event.target.value })} helperText="Arrastra variables desde Entrada. Este nodo genera datos; no envía WhatsApp." />
           <Paper variant="outlined" sx={{ p: 1.25 }}>
-            <Typography variant="subtitle2" fontWeight={900} sx={{ mb: 1 }}>Limites de memoria de este nodo</Typography>
+            <Typography variant="subtitle2" fontWeight={900} sx={{ mb: 1 }}>Límites de este nodo</Typography>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
               <TextField size="small" fullWidth type="number" label="Datos de entrada (caracteres)" value={config.contextCharBudget ?? 3000} onChange={(event) => updateConfig({ contextCharBudget: Number(event.target.value) })} inputProps={{ min: 800, max: 6500, step: 100 }} helperText="Solo la entrada elegida o conectada." />
-              <TextField size="small" fullWidth type="number" label="Historial (caracteres)" value={config.historyCharBudget ?? 1800} onChange={(event) => updateConfig({ historyCharBudget: Number(event.target.value) })} inputProps={{ min: 600, max: 4000, step: 100 }} helperText="Conserva primero los mensajes mas recientes." />
               <TextField size="small" fullWidth type="number" label="Respuesta maxima (tokens)" value={config.maxOutputTokens ?? 400} onChange={(event) => updateConfig({ maxOutputTokens: Number(event.target.value) })} inputProps={{ min: 128, max: 800, step: 25 }} helperText="Limite de salida del modelo." />
             </Stack>
           </Paper>

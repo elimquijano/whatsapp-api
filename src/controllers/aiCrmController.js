@@ -432,7 +432,7 @@ Historial: {{history}}
           priority: 0,
           description: "Saludos, consultas generales y conversaciones que no corresponden a otra tarea especializada.",
           routingPrompt: "Usar cuando la solicitud puede resolverse con el contexto configurado y no corresponde a otra tarea disponible.",
-          executionPrompt: "Usa el contexto configurado como fuente de verdad y el historial únicamente para mantener continuidad. No inventes información ni sustituyas una tarea especializada.",
+          executionPrompt: "Ejecuta únicamente esta tarea con los argumentos del orquestador y el contexto relevante. No reclasifiques la conversación ni inventes información.",
           responsePrompt: "Entrega una respuesta breve, útil y natural para WhatsApp.",
           continuationEnabled: false,
           stateSchema: {
@@ -444,7 +444,6 @@ Historial: {{history}}
               { name: "arguments", type: "object", required: false, description: "Campos extraídos o mapeados por el orquestador", source: "arguments" },
               { name: "analysis", type: "object", required: true, description: "Resultado del filtro de interacción", source: "analysis" },
               { name: "state", type: "object", required: false, description: "Estado acumulado de la tarea", source: "state" },
-              { name: "history", type: "array", required: false, description: "Historial reciente del chat", source: "history" },
               { name: "session", type: "object", required: true, description: "Sesión actual", source: "session" },
               { name: "task", type: "object", required: true, description: "Agente seleccionado y sus instrucciones", source: "task" },
             ],
@@ -457,7 +456,7 @@ Historial: {{history}}
           },
           nodes: [
             { key: "entrada_agente", name: "Entrada del agente", type: "agent_input", position: { x: 80, y: 180 }, config: {}, credentials: {} },
-            { key: "redactar_respuesta", name: "Redactar con IA", type: "ai", position: { x: 400, y: 180 }, config: { useSessionModel: true, prompt: "Redacta una respuesta usando el contexto configurado como fuente de verdad y el historial solo para continuidad. No inventes información ni sustituyas otra tarea disponible.", outputField: "content", inputMapping: {}, contextCharBudget: 3000, historyCharBudget: 1800, maxOutputTokens: 400, outputFields: [{ name: "content", type: "string", source: "content", required: true }, { name: "stateUpdates", type: "object", source: "stateUpdates" }, { name: "taskComplete", type: "boolean", source: "taskComplete" }] }, credentials: {} },
+            { key: "redactar_respuesta", name: "Redactar con IA", type: "ai", position: { x: 400, y: 180 }, config: { useSessionModel: true, prompt: "Redacta la respuesta usando los argumentos ya seleccionados y el contexto relevante. Haz únicamente esta tarea.", outputField: "content", inputMapping: {}, contextCharBudget: 3000, maxOutputTokens: 400, outputFields: [{ name: "content", type: "string", source: "content", required: true }, { name: "stateUpdates", type: "object", source: "stateUpdates" }, { name: "taskComplete", type: "boolean", source: "taskComplete" }] }, credentials: {} },
             { key: "salida_agente", name: "Salida del agente", type: "agent_output", position: { x: 720, y: 180 }, config: { outputMapping: { content: "{{nodes.redactar_respuesta.content}}", state: "{{state}}", evidence: "{{evidence}}", nodes: "{{nodes}}" } }, credentials: {} },
           ],
           edges: [
