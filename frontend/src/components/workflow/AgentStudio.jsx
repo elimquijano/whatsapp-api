@@ -245,6 +245,10 @@ const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, 
           <Stack direction="row" spacing={1}><TextField select size="small" label="Método" value={config.method || 'GET'} onChange={(event) => updateConfig({ method: event.target.value })} sx={{ width: 110 }}>{['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((method) => <MenuItem key={method} value={method}>{method}</MenuItem>)}</TextField><DroppableText size="small" fullWidth label="URL" value={config.url || ''} onChange={(event) => updateConfig({ url: event.target.value })} /></Stack>
           <JsonEditor label="Headers" value={config.headers || {}} onChange={(headers) => updateConfig({ headers })} />
           <JsonEditor label="Body" value={config.requestBody || {}} onChange={(requestBody) => updateConfig({ requestBody })} />
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+            <TextField size="small" fullWidth type="number" label="Respuesta máxima (MB)" value={config.maxResponseMb ?? 5} onChange={(event) => updateConfig({ maxResponseMb: Number(event.target.value) })} inputProps={{ min: 1, max: 25, step: 1 }} helperText="Hasta 25 MB. Mapea solo los campos necesarios cuando la API devuelva listas grandes." />
+            <TextField size="small" fullWidth type="number" label="Tiempo máximo (segundos)" value={Math.round((config.timeoutMs ?? 30000) / 1000)} onChange={(event) => updateConfig({ timeoutMs: Number(event.target.value) * 1000 })} inputProps={{ min: 1, max: 120, step: 1 }} helperText="Hasta 120 segundos para APIs lentas." />
+          </Stack>
           <TextField size="small" fullWidth label="Ruta de la respuesta" value={config.responsePath || ''} onChange={(event) => updateConfig({ responsePath: event.target.value })} />
           <JsonEditor label="Mapeo de respuesta" value={config.responseMapping || {}} onChange={(responseMapping) => updateConfig({ responseMapping })} />
         </>}
