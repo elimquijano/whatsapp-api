@@ -24,7 +24,8 @@ const MAX_AI_RESPONSE_BYTES = 2 * MIB;
 const MAX_AI_REQUEST_BYTES = 2 * MIB;
 const MAX_AI_VISION_REQUEST_BYTES = 15 * MIB;
 const GROQ_VISION_FALLBACK_MODEL = "qwen/qwen3.6-27b";
-const MAX_NODE_RESPONSE_BYTES = 5 * MIB;
+const DEFAULT_NODE_RESPONSE_BYTES = 5 * MIB;
+const MAX_NODE_RESPONSE_BYTES = 25 * MIB;
 const MAX_NODE_REQUEST_BYTES = 2 * MIB;
 const AI_PROVIDER_HOSTS = {
   openai: new Set(["api.openai.com"]),
@@ -43,6 +44,21 @@ const configuredAiProviderHosts = () => new Set(
 const boundedInteger = (value, fallback, minimum, maximum) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? Math.min(maximum, Math.max(minimum, Math.trunc(numeric))) : fallback;
+};
+
+export const resolveHttpNodeLimits = (config = {}) => {
+  const configuredBytes = config.maxResponseMb !== undefined
+    ? Number(config.maxResponseMb) * MIB
+    : config.maxResponseBytes;
+  return {
+    timeoutMs: boundedInteger(config.timeoutMs, 30000, 1000, 120000),
+    maxResponseBytes: boundedInteger(
+      configuredBytes,
+      DEFAULT_NODE_RESPONSE_BYTES,
+      KIB,
+      MAX_NODE_RESPONSE_BYTES,
+    ),
+  };
 };
 
 export class WorkflowContractError extends Error {
@@ -1854,12 +1870,13 @@ class AiCrmService {
         error.code = "HTTP_NODE_REQUEST_TOO_LARGE";
         throw error;
       }
+      const limits = resolveHttpNodeLimits(config);
       const response = await safeFetchBuffer(url, {
         method,
         headers,
         body: requestBody,
-        timeoutMs: boundedInteger(config.timeoutMs, 15000, 1000, 60000),
-        maxBytes: boundedInteger(config.maxResponseBytes, MIB, KIB, MAX_NODE_RESPONSE_BYTES),
+        timeoutMs: limits.timeoutMs,
+        maxBytes: limits.maxResponseBytes,
         maxRedirects: 3,
       });
       const text = response.text();
