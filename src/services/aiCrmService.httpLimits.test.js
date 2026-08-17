@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveHttpNodeLimits } from "./aiCrmService.js";
+import { resolveHttpNodeLimits, shapeHttpResponse } from "./aiCrmService.js";
 
 const MIB = 1024 * 1024;
 
@@ -27,4 +27,18 @@ test("los límites de nodos HTTP se acotan en el servidor", () => {
 
 test("se conserva compatibilidad con maxResponseBytes", () => {
   assert.equal(resolveHttpNodeLimits({ maxResponseBytes: 3 * MIB }).maxResponseBytes, 3 * MIB);
+});
+
+test("el parseo HTTP selecciona y mapea cada elemento de un array", () => {
+  const response = { data: { items: [{ id: 1, product: { name: "Agua" } }, { id: 2, product: { name: "Café" } }] } };
+  assert.deepEqual(shapeHttpResponse(response, "data.items", { identificador: "id", nombre: "product.name" }), [
+    { identificador: 1, nombre: "Agua" },
+    { identificador: 2, nombre: "Café" },
+  ]);
+});
+
+test("el parseo HTTP conserva objetos y arrays cuando no hay mapeo", () => {
+  const items = [{ id: 1 }, { id: 2 }];
+  assert.deepEqual(shapeHttpResponse({ data: items }, "body.data"), items);
+  assert.deepEqual(shapeHttpResponse({ id: 1 }), { id: 1 });
 });

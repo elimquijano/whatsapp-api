@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Alert, Box, Button, Chip, Dialog, Divider, IconButton, MenuItem, Paper, Stack, Tab, Tabs,
+  Alert, Box, Button, Chip, CircularProgress, Dialog, Divider, IconButton, MenuItem, Paper, Stack, Tab, Tabs,
   TextField, Tooltip, Typography,
 } from '@mui/material';
 import { Add, Close, Delete, Lock, PlayArrow, Psychology, Tune } from '@mui/icons-material';
@@ -194,7 +194,7 @@ const availableVariables = (permission, node) => {
   return { ...contract, nodes };
 };
 
-const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, onDelete, onClose, onTest }) => {
+const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, onDelete, onClose, onTest, testing, testMessage, onTestMessageChange }) => {
   const fallbackInput = useMemo(() => node ? availableVariables(permission, node) : {}, [node, permission]);
   const fallbackOutput = useMemo(() => node ? nodeOutputPreview(node, permission) : {}, [node, permission]);
   if (!node) return <Paper variant="outlined" sx={{ height: '100%', p: 2 }}><Stack spacing={1.5} alignItems="center" justifyContent="center" sx={{ minHeight: 260 }}><Tune color="disabled" sx={{ fontSize: 42 }} /><Typography fontWeight={800}>Selecciona un nodo</Typography><Typography variant="body2" color="text.secondary" align="center">Aquí editarás sus entradas, parámetros, salidas y verás datos reales de ejecución.</Typography></Stack></Paper>;
@@ -207,7 +207,8 @@ const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, 
       <Psychology color="primary" />
       <Box sx={{ flex: 1, minWidth: 0 }}><Typography fontWeight={900} noWrap>{node.name}</Typography><Typography variant="caption" color="text.secondary">{node.type} · {node.key}</Typography></Box>
       {fixed ? <Tooltip title="Nodo estructural fijo"><Lock color="disabled" /></Tooltip> : <Tooltip title="Eliminar nodo"><IconButton color="error" onClick={() => onDelete(node.key)}><Delete /></IconButton></Tooltip>}
-      <Tooltip title="Ejecuta este borrador en modo seguro, sin guardarlo"><Button size="small" color="success" variant="outlined" startIcon={<PlayArrow />} onClick={onTest}>Probar borrador</Button></Tooltip>
+      <TextField size="small" label="Mensaje para la prueba" value={testMessage} onChange={(event) => onTestMessageChange(event.target.value)} sx={{ width: { xs: 150, md: 280 } }} />
+      <Tooltip title="Ejecutar ahora sin guardar ni salir de este nodo"><span><Button size="small" color="success" variant="contained" startIcon={testing ? <CircularProgress color="inherit" size={15} /> : <PlayArrow />} onClick={onTest} disabled={testing || !testMessage?.trim()}>{testing ? 'Probando…' : 'Probar ahora'}</Button></span></Tooltip>
       <Tooltip title="Cerrar editor"><IconButton onClick={onClose}><Close /></IconButton></Tooltip>
     </Stack>
     <Divider />
@@ -250,9 +251,9 @@ const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, 
             <TextField size="small" fullWidth type="number" label="Respuesta máxima (MB)" value={config.maxResponseMb ?? 5} onChange={(event) => updateConfig({ maxResponseMb: Number(event.target.value) })} inputProps={{ min: 1, max: 25, step: 1 }} helperText="Hasta 25 MB. Mapea solo los campos necesarios cuando la API devuelva listas grandes." />
             <TextField size="small" fullWidth type="number" label="Tiempo máximo (segundos)" value={Math.round((config.timeoutMs ?? 30000) / 1000)} onChange={(event) => updateConfig({ timeoutMs: Number(event.target.value) * 1000 })} inputProps={{ min: 1, max: 120, step: 1 }} helperText="Hasta 120 segundos para APIs lentas." />
           </Stack>
-          <TextField size="small" fullWidth label="Qué parte de la respuesta usar (opcional)" value={config.responsePath || ''} onChange={(event) => updateConfig({ responsePath: event.target.value })} placeholder="body.data" helperText="Déjalo vacío para usar la respuesta completa. Ejemplo: si la API devuelve { body: { data: [...] } }, escribe body.data para quedarte solo con la lista." />
-          <JsonEditor label="Renombrar o elegir campos de la respuesta (opcional)" value={config.responseMapping || {}} onChange={(responseMapping) => updateConfig({ responseMapping })} rows={5} />
-          <Alert severity="info" icon={false}>Ejemplo de mapeo: <code>{'{ "cliente": "{{body.name}}", "identificador": "{{body.id}}" }'}</code>. La palabra de la izquierda será el nombre que usarán los siguientes nodos; la variable de la derecha indica de dónde sale el dato. Puedes dejarlo vacío.</Alert>
+          <TextField size="small" fullWidth label="Lista u objeto dentro de la respuesta (opcional)" value={config.responsePath || ''} onChange={(event) => updateConfig({ responsePath: event.target.value })} placeholder="data.items" helperText="La respuesta ya está parseada. Escribe una ruta como data.items; si allí hay un array se conserva completo y se procesa elemento por elemento." />
+          <MappingEditor title="Campos que quieres obtener (opcional)" value={config.responseMapping || {}} onChange={(responseMapping) => updateConfig({ responseMapping })} helperText="Ruta dentro de cada objeto, por ejemplo name, price.amount o id. En arrays se aplica a cada elemento." />
+          <Alert severity="info" icon={false}><b>Objetos y arrays:</b> sin campos elegidos pasa la respuesta tal cual. Si la ruta seleccionada contiene una lista, el mapeo produce otra lista; por ejemplo <code>nombre ← name</code> y <code>precio ← price</code>.</Alert>
         </>}
         {node.type === 'script' && <>
           <Alert severity="info" icon={false}><b>Script:</b> <code>input.nodeInput</code> contiene la entrada inmediata o mapeada; <code>input.nodes</code> contiene todos los nodos anteriores. Debes terminar con <code>return {'{ ... }'}</code>. Declara abajo esos campos de salida para que el siguiente nodo pueda usarlos antes de hacer una prueba.</Alert>
@@ -279,7 +280,7 @@ const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, 
 const AgentStudio = ({
   permissions, permissionIndex, onSelectPermission, permission, onCreate, onDeletePermission,
   onUpdatePermission, selectedNodeKey, onSelectNode, onUpdateNode, onDeleteNode,
-  nodeStates, activeExecution, createNode, onTest,
+  nodeStates, activeExecution, createNode, onTest, onTestNode, testing, testMessage, onTestMessageChange,
 }) => {
   const trace = activeExecution?.nodeExecutions?.find((item) => (item.scope === 'task' || !item.scope) && item.nodeKey === selectedNodeKey);
   return <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '220px minmax(0, 1fr)' }, gridTemplateRows: { xs: 'auto minmax(680px, 1fr)', lg: 'minmax(720px, calc(100dvh - 225px))' }, minHeight: 0, border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
@@ -302,7 +303,7 @@ const AgentStudio = ({
       </Box>
     </Stack>}
     <Dialog open={Boolean(permission && selectedNodeKey)} onClose={() => onSelectNode('')} fullWidth maxWidth="xl" PaperProps={{ sx: { height: 'min(88dvh, 900px)', maxHeight: '95dvh', overflow: 'hidden' } }}>
-      <NodeInspector node={permission?.nodes?.find((node) => node.key === selectedNodeKey)} trace={trace} permission={permission} onUpdatePermission={onUpdatePermission} onUpdate={onUpdateNode} onDelete={onDeleteNode} onClose={() => onSelectNode('')} onTest={onTest} />
+      <NodeInspector node={permission?.nodes?.find((node) => node.key === selectedNodeKey)} trace={trace} permission={permission} onUpdatePermission={onUpdatePermission} onUpdate={onUpdateNode} onDelete={onDeleteNode} onClose={() => onSelectNode('')} onTest={onTestNode} testing={testing} testMessage={testMessage} onTestMessageChange={onTestMessageChange} />
     </Dialog>
   </Box>;
 };
