@@ -1,4 +1,3 @@
-import vm from "node:vm";
 import User from "../models/User.js";
 import Plan from "../models/Plan.js";
 import WhatsAppSession from "../models/WhatsAppSession.js";
@@ -17,6 +16,7 @@ import { getEnabledGlobalTaskKeys, GLOBAL_WORKFLOW_MESSAGE_TYPES } from "../util
 import { compileMainWorkflow, MAIN_MESSAGE_TYPES, serializeMainWorkflow } from "../utils/mainWorkflow.js";
 import { mainWorkflowInclude, migrateLegacyWorkflowDefinition } from "./mainWorkflowRepository.js";
 import { findOrCreateResolvedContact } from "./crmIdentityService.js";
+import { runWorkflowSandbox } from "../utils/workflowSandbox.js";
 
 const KIB = 1024;
 const MIB = 1024 * KIB;
@@ -1909,12 +1909,10 @@ class AiCrmService {
       };
     }
     if (node.type === "transform" || node.type === "script") {
-      const sandbox = { input: structuredClone(variables), output: null };
       const code = node.type === "transform"
         ? `output = (${renderString(config.expression || "input", variables)});`
         : `output = (function(input) { "use strict"; ${config.code || "return input;"} })(input);`;
-      vm.runInNewContext(code, sandbox, { timeout: Math.min(1000, Number(config.timeoutMs || 200)), contextCodeGeneration: { strings: false, wasm: false } });
-      return sandbox.output;
+      return runWorkflowSandbox({ sandbox: { input: variables, output: null }, code, resultKey: "output" }, { timeoutMs: config.timeoutMs });
     }
     if (node.type === "state_update") {
       return {
@@ -1950,9 +1948,12 @@ class AiCrmService {
       }
       const directInputs = Object.fromEntries(Object.entries(variables.nodeInput || {})
         .filter(([key]) => /^[A-Za-z_$][\w$]*$/.test(key) && !["input", "result"].includes(key)));
-      const sandbox = { input: structuredClone(variables), ...structuredClone(directInputs), result: false };
-      vm.runInNewContext(`result = Boolean(${config.expression || "false"});`, sandbox, { timeout: 200, contextCodeGeneration: { strings: false, wasm: false } });
-      return { result: Boolean(sandbox.result), expression: config.expression || "false" };
+      const result = await runWorkflowSandbox({
+        sandbox: { input: variables, ...directInputs, result: false },
+        code: `result = Boolean(${config.expression || "false"});`,
+        resultKey: "result",
+      }, { timeoutMs: config.timeoutMs });
+      return { result: Boolean(result), expression: config.expression || "false" };
     }
     if (node.type === "ai") {
       const effective = {
