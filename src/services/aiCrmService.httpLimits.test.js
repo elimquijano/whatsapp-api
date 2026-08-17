@@ -2,31 +2,25 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mapHttpResponseBody, resolveHttpNodeLimits } from "./aiCrmService.js";
 
-const MIB = 1024 * 1024;
-
-test("los nodos HTTP aceptan respuestas grandes configuradas en MB", () => {
-  assert.deepEqual(resolveHttpNodeLimits({ maxResponseMb: 20, timeoutMs: 90000 }), {
-    maxResponseBytes: 20 * MIB,
+test("los nodos HTTP no recortan la descarga que usan los nodos siguientes", () => {
+  assert.deepEqual(resolveHttpNodeLimits({ timeoutMs: 90000 }), {
+    maxResponseBytes: Number.MAX_SAFE_INTEGER,
     timeoutMs: 90000,
   });
 });
 
-test("los nodos HTTP usan límites amplios y seguros por defecto", () => {
+test("los nodos HTTP conservan el tiempo máximo por defecto", () => {
   assert.deepEqual(resolveHttpNodeLimits(), {
-    maxResponseBytes: 5 * MIB,
+    maxResponseBytes: Number.MAX_SAFE_INTEGER,
     timeoutMs: 30000,
   });
 });
 
-test("los límites de nodos HTTP se acotan en el servidor", () => {
-  assert.deepEqual(resolveHttpNodeLimits({ maxResponseMb: 100, timeoutMs: 999999 }), {
-    maxResponseBytes: 25 * MIB,
+test("el tiempo de nodos HTTP se acota en el servidor", () => {
+  assert.deepEqual(resolveHttpNodeLimits({ timeoutMs: 999999 }), {
+    maxResponseBytes: Number.MAX_SAFE_INTEGER,
     timeoutMs: 120000,
   });
-});
-
-test("se conserva compatibilidad con maxResponseBytes", () => {
-  assert.equal(resolveHttpNodeLimits({ maxResponseBytes: 3 * MIB }).maxResponseBytes, 3 * MIB);
 });
 
 test("el mapeo de respuesta conserva solo los campos elegidos de cada elemento de un array", () => {
@@ -50,9 +44,9 @@ test("sin mapeo se conserva la respuesta HTTP completa", () => {
   assert.deepEqual(mapHttpResponseBody(response, {}), response);
 });
 
-test("las respuestas masivas se limitan antes de mapear para proteger memoria y trazas", () => {
+test("las respuestas masivas se conservan completas para los nodos siguientes", () => {
   const response = Array.from({ length: 10000 }, (_, id) => ({ id, payload: "innecesario" }));
-  const mapped = mapHttpResponseBody(response, { id: "id" }, 200);
-  assert.equal(mapped.length, 200);
-  assert.deepEqual(mapped.at(-1), { id: 199 });
+  const mapped = mapHttpResponseBody(response, { id: "id" });
+  assert.equal(mapped.length, response.length);
+  assert.deepEqual(mapped.at(-1), { id: 9999 });
 });
