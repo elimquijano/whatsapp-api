@@ -971,18 +971,31 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
     }
   };
 
-  const runTest = async ({ keepEditorOpen = false } = {}) => {
+  const runTest = async () => {
     if (!permission?.key) return;
     setTesting(true);
     setMessage(null);
     try {
+      const savedResponse = await axios.put(`/api/v1/sessions/${sessionId}/ai/config`, { config });
+      const savedPermissions = (savedResponse.data.config?.permissions || []).map(normalizePermission);
+      setConfig({
+        ...newStarterConfig(),
+        ...savedResponse.data.config,
+        workflowEngineVersion: Number(savedResponse.data.workflowEngineVersion || config.workflowEngineVersion || 0),
+        permissions: savedPermissions,
+        mainWorkflow: savedResponse.data.config?.mainWorkflow || config.mainWorkflow,
+        aiApiToken: '',
+      });
+      onAutomationChange?.(Boolean(savedResponse.data.config?.autoReplyEnabled));
+      const savedTaskKey = savedResponse.data.config?.permissions?.[permissionIndex]?.key || permission.key;
       const response = await axios.post(
-        `/api/v1/sessions/${sessionId}/ai/workflows/tasks/${encodeURIComponent(permission.key)}/test`,
-        { ...testPayload, draftConfig: config, draftPermission: permission },
+        `/api/v1/sessions/${sessionId}/ai/workflows/tasks/${encodeURIComponent(savedTaskKey)}/test`,
+        testPayload,
       );
       const executionId = response.data.executionId || response.data.result?.executionId;
-      if (!keepEditorOpen) setTestOpen(false);
-      setMessage({ type: 'info', text: 'Prueba aislada del borrador iniciada sin guardar. Las acciones que escriben datos y el envío por WhatsApp se simulan.' });
+      setTestOpen(false);
+      setTab(1);
+      setMessage({ type: 'info', text: 'Prueba segura iniciada. Las acciones que escriben datos y el envío por WhatsApp se simulan.' });
       if (executionId) {
         showExecution({ id: executionId, status: response.data.status || 'running', trigger: 'test', nodeExecutions: [], pollAfterMs: 700 });
         await loadExecutionDetail(executionId);
@@ -1133,8 +1146,6 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
         <Tooltip title="Descarga Cerebro, prompts, agentes y workflow principal; nunca incluye tokens ni credenciales"><Button startIcon={<Download />} onClick={exportWorkflows} disabled={loading}>Exportar todo</Button></Tooltip>
         <Tooltip title="Reemplaza el borrador actual; podrás revisarlo antes de guardar"><Button startIcon={<Upload />} onClick={() => importInputRef.current?.click()} disabled={loading}>Importar</Button></Tooltip>
         <Button startIcon={<AutoAwesome />} onClick={applyPreset} disabled={loading}>Restaurar configuración inicial</Button>
-        {pageMode && <Button variant="contained" startIcon={<Save />} disabled={loading} onClick={save}>{loading ? 'Guardando...' : 'Guardar cambios'}</Button>}
-        <Tooltip title={pageMode ? 'Volver al panel' : 'Cerrar'}><IconButton onClick={onClose}><Close /></IconButton></Tooltip>
       </DialogTitle>
       <Divider />
       <Tabs value={tab} onChange={(_, value) => setTab(value)} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile sx={{ px: { xs: 0.5, sm: 2 }, bgcolor: 'background.paper', flexShrink: 0 }}>
@@ -1197,10 +1208,6 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
             activeExecution={activeExecution}
             createNode={(type, position) => makeNode(type, position, permission?.nodes || [])}
             onTest={() => setTestOpen(true)}
-            onTestNode={() => runTest({ keepEditorOpen: true })}
-            testing={testing}
-            testMessage={testPayload.message || ''}
-            onTestMessageChange={(message) => setTestPayload((current) => ({ ...current, message }))}
           />
         )}
 
@@ -1659,7 +1666,7 @@ const WorkflowTestDialog = ({ open, onClose, onRun, loading, task, payload, setP
       <DialogActions>
         <Button onClick={onClose} disabled={loading}>Cancelar</Button>
         <Button variant="contained" color="success" startIcon={loading ? <CircularProgress color="inherit" size={16} /> : <PlayArrow />} onClick={onRun} disabled={loading || !payload.message?.trim()}>
-          {loading ? 'Iniciando...' : 'Iniciar prueba sin guardar'}
+          {loading ? 'Iniciando...' : 'Guardar e iniciar prueba'}
         </Button>
       </DialogActions>
     </Dialog>

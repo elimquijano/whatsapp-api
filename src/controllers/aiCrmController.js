@@ -574,37 +574,10 @@ export const testWorkflowTask = async (req, res) => {
     const session = await sessionBundle(req.user.id, req.params.sessionId);
     if (!session) return res.status(404).json({ success: false, error: "Sesión no encontrada" });
     if (!session.aiConfig) return res.status(400).json({ success: false, error: "La sesión no tiene configuración IA CRM" });
-    // A test may run the editor's in-memory draft.  This deliberately avoids
-    // persisting the whole workflow just to validate a change.
-    const draftPermission = req.body.draftPermission && typeof req.body.draftPermission === "object"
-      ? req.body.draftPermission
-      : null;
-    const savedPermission = (session.aiConfig.permissions || []).find((item) => item.key === req.params.taskKey);
-    const savedNodes = new Map((savedPermission?.nodes || []).map((node) => [node.key, node]));
-    const permission = draftPermission?.key === req.params.taskKey
-      ? {
-        ...draftPermission,
-        id: draftPermission.id || savedPermission?.id || null,
-        nodes: (draftPermission.nodes || []).map((node) => ({
-          ...node,
-          credentials: Object.keys(node.credentials || {}).length
-            ? node.credentials
-            : savedNodes.get(node.key)?.credentials || {},
-        })),
-      }
-      : savedPermission;
+    const permission = (session.aiConfig.permissions || []).find((item) => item.key === req.params.taskKey);
     if (!permission) return res.status(404).json({ success: false, error: "Tarea no encontrada" });
     if (permission.enabled === false) return res.status(409).json({ success: false, error: "La tarea está deshabilitada" });
 
-    const draftConfig = req.body.draftConfig && typeof req.body.draftConfig === "object" ? req.body.draftConfig : {};
-    // Secrets are never sent back to the browser. Keep the stored credentials
-    // while applying the editable, non-persisted values for this execution.
-    const runtimeConfig = {
-      ...session.aiConfig,
-      ...draftConfig,
-      whatsappSessionId: session.aiConfig.whatsappSessionId,
-      aiApiToken: draftConfig.aiApiToken || session.aiConfig.aiApiToken,
-    };
     const message = String(req.body.message || "Mensaje de prueba").slice(0, 10000);
     const rawHistory = Array.isArray(req.body.history) ? req.body.history.slice(-100) : [];
     const history = rawHistory
@@ -638,7 +611,7 @@ export const testWorkflowTask = async (req, res) => {
       },
     };
     let acceptedExecutionId = null;
-    const run = aiCrmService.executeWorkflow(runtimeConfig, permission, input, {
+    const run = aiCrmService.executeWorkflow(session.aiConfig, permission, input, {
       safeMode: true,
       trigger: "test",
       onStarted: ({ executionId }) => {

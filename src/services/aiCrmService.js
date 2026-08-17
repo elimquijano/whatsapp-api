@@ -61,21 +61,6 @@ export const resolveHttpNodeLimits = (config = {}) => {
   };
 };
 
-// HTTP nodes expose their parsed payload as `body`, but responsePath is applied
-// to that payload itself. Accepting an optional `body.` prefix keeps the editor
-// forgiving, while mapping every array item makes list APIs usable without a
-// separate script node.
-export const shapeHttpResponse = (body, responsePath = "", responseMapping = {}) => {
-  const normalizedPath = String(responsePath || "").trim().replace(/^body(?:\.|$)/, "");
-  const selected = normalizedPath ? getPath(body, normalizedPath) : body;
-  const entries = responseMapping && typeof responseMapping === "object" && !Array.isArray(responseMapping)
-    ? Object.entries(responseMapping)
-    : [];
-  if (!entries.length) return selected;
-  const mapOne = (item) => Object.fromEntries(entries.map(([key, path]) => [key, getPath(item, String(path || "").replace(/^item(?:\.|$)/, ""))]));
-  return Array.isArray(selected) ? selected.map(mapOne) : mapOne(selected);
-};
-
 export class WorkflowContractError extends Error {
   constructor(direction, validation) {
     const missing = validation.missing?.length ? ` faltantes: ${validation.missing.join(", ")}` : "";
@@ -1898,9 +1883,11 @@ class AiCrmService {
       let body;
       try { body = JSON.parse(text); } catch { body = text; }
       if (!response.ok && config.continueOnError !== true) throw new Error(`Nodo ${node.name} respondió HTTP ${response.status}`);
+      const selectedBody = config.responsePath ? getPath(body, config.responsePath) : body;
       const responseMapping = config.responseMapping && typeof config.responseMapping === "object" ? config.responseMapping : {};
-      const mappedBody = shapeHttpResponse(body, config.responsePath, responseMapping);
-      const selectedBody = shapeHttpResponse(body, config.responsePath);
+      const mappedBody = Object.keys(responseMapping).length
+        ? Object.fromEntries(Object.entries(responseMapping).map(([key, path]) => [key, getPath(selectedBody, path)]))
+        : selectedBody;
       const stateMapping = config.stateMapping && typeof config.stateMapping === "object" ? config.stateMapping : {};
       const stateUpdates = Object.fromEntries(Object.entries(stateMapping).map(([key, path]) => [key, getPath(selectedBody, path)]));
       return {
