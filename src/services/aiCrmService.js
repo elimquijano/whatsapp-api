@@ -17,6 +17,7 @@ import { compileMainWorkflow, MAIN_MESSAGE_TYPES, serializeMainWorkflow } from "
 import { mainWorkflowInclude, migrateLegacyWorkflowDefinition } from "./mainWorkflowRepository.js";
 import { findOrCreateResolvedContact } from "./crmIdentityService.js";
 import { runWorkflowSandbox } from "../utils/workflowSandbox.js";
+import { parseHttpResponseBuffer } from "../utils/httpResponseParser.js";
 
 const KIB = 1024;
 const MIB = 1024 * KIB;
@@ -24,6 +25,8 @@ const MAX_AI_RESPONSE_BYTES = 2 * MIB;
 const MAX_AI_REQUEST_BYTES = 2 * MIB;
 const MAX_AI_VISION_REQUEST_BYTES = 15 * MIB;
 const GROQ_VISION_FALLBACK_MODEL = "qwen/qwen3.6-27b";
+const DEFAULT_NODE_RESPONSE_BYTES = 25 * MIB;
+const MAX_NODE_RESPONSE_BYTES = 100 * MIB;
 const MAX_NODE_REQUEST_BYTES = 2 * MIB;
 const AI_PROVIDER_HOSTS = {
   openai: new Set(["api.openai.com"]),
@@ -45,11 +48,14 @@ const boundedInteger = (value, fallback, minimum, maximum) => {
 };
 
 export const resolveHttpNodeLimits = (config = {}) => {
+  const configuredBytes = config.maxResponseMb !== undefined
+    ? Number(config.maxResponseMb) * MIB
+    : config.maxResponseBytes;
   return {
     timeoutMs: boundedInteger(config.timeoutMs, 30000, 1000, 120000),
-    // HTTP workflow data must reach downstream nodes intact. Number.MAX_SAFE_INTEGER
-    // disables the generic buffered-fetch cap without changing its SSRF protections.
-    maxResponseBytes: Number.MAX_SAFE_INTEGER,
+    // The response is buffered and parsed as JSON. An unlimited value can exhaust
+    // the process before an error has a chance to be recorded in the trace.
+    maxResponseBytes: boundedInteger(configuredBytes, DEFAULT_NODE_RESPONSE_BYTES, MIB, MAX_NODE_RESPONSE_BYTES),
   };
 };
 
@@ -1876,6 +1882,7 @@ class AiCrmService {
         throw error;
       }
       const limits = resolveHttpNodeLimits(config);
+      const requestStartedAt = Date.now();
       const response = await safeFetchBuffer(url, {
         method,
         headers,
@@ -1884,22 +1891,39 @@ class AiCrmService {
         maxBytes: limits.maxResponseBytes,
         maxRedirects: 3,
       });
-      const text = response.text();
-      let body;
-      try { body = JSON.parse(text); } catch { body = text; }
       if (!response.ok && config.continueOnError !== true) throw new Error(`Nodo ${node.name} respondió HTTP ${response.status}`);
-      const selectedBody = config.responsePath ? getPath(body, config.responsePath) : body;
       const responseMapping = config.responseMapping && typeof config.responseMapping === "object" ? config.responseMapping : {};
-      // Keep the complete response in the runtime. Large arrays are reduced only
-      // by the trace/view serializers, never before filters or downstream nodes.
-      const mappedBody = mapHttpResponseBody(selectedBody, responseMapping);
       const stateMapping = config.stateMapping && typeof config.stateMapping === "object" ? config.stateMapping : {};
-      const stateUpdates = Object.fromEntries(Object.entries(stateMapping).map(([key, path]) => [key, getPath(selectedBody, path)]));
+      const responseBytes = response.buffer.length;
+      const parseStartedAt = Date.now();
+      const parsedResponse = await parseHttpResponseBuffer(response.buffer, {
+        responsePath: config.responsePath,
+        responseMapping,
+        stateMapping,
+        timeoutMs: limits.timeoutMs,
+      });
+      const itemCount = Array.isArray(parsedResponse.body) ? parsedResponse.body.length : null;
+      const responseMeta = {
+        bytes: responseBytes,
+        megabytes: Number((responseBytes / MIB).toFixed(2)),
+        itemCount,
+        downloadMs: parseStartedAt - requestStartedAt,
+        processingMs: Date.now() - parseStartedAt,
+      };
+      if (responseMeta.bytes >= MIB || (itemCount ?? 0) >= 500) {
+        console.info("Nodo HTTP procesado", {
+          executionId: variables.execution?.id || null,
+          nodeKey: node.key,
+          status: response.status,
+          ...responseMeta,
+        });
+      }
       return {
         ok: response.ok,
         status: response.status,
-        body: mappedBody,
-        stateUpdates,
+        body: parsedResponse.body,
+        responseMeta,
+        stateUpdates: parsedResponse.stateUpdates,
         taskComplete: response.ok && hasSideEffect && config.completeTaskOnSuccess === true,
         effectKey: response.ok ? effectKey : "",
         idempotencyKey,

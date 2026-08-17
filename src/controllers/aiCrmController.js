@@ -642,7 +642,11 @@ export const testWorkflowTask = async (req, res) => {
       }
     }).catch((error) => {
       if (!res.headersSent) res.status(400).json({ success: false, error: error.message, executionId: error.executionId || null, safeMode: true });
-      else console.error(`La prueba segura ${acceptedExecutionId || error.executionId || "sin traza"} finalizó con error`);
+      else console.error(
+        `La prueba segura ${acceptedExecutionId || error.executionId || "sin traza"} finalizó con error:`,
+        error?.code || error?.name || "ERROR",
+        error?.message || error,
+      );
     });
     return undefined;
   } catch (error) {
