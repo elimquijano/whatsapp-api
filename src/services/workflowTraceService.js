@@ -28,7 +28,9 @@ const sanitizeString = (value) => {
 export const sanitizeForTrace = (value, options = {}) => {
   const maxDepth = Math.min(12, Math.max(1, Number(options.maxDepth || 8)));
   const maxArray = Math.min(500, Math.max(1, Number(options.maxArray || 100)));
-  const seen = new WeakSet();
+  // Track only the current ancestry. Reusing the same object in two branches
+  // is common in workflow inputs and is not a circular reference.
+  const ancestors = new WeakSet();
 
   const walk = (item, depth, parentKey = "") => {
     if (item === null || item === undefined) return item ?? null;
@@ -38,19 +40,21 @@ export const sanitizeForTrace = (value, options = {}) => {
     if (typeof item === "bigint") return item.toString();
     if (typeof item !== "object") return String(item);
     if (depth >= maxDepth) return "[MAX_DEPTH]";
-    if (seen.has(item)) return "[CIRCULAR]";
-    seen.add(item);
     if (item instanceof Date) return item.toISOString();
     if (Buffer.isBuffer(item)) return `[BUFFER ${item.length} bytes]`;
+    if (ancestors.has(item)) return "[CIRCULAR]";
+    ancestors.add(item);
     if (Array.isArray(item)) {
       const result = item.slice(0, maxArray).map((entry) => walk(entry, depth + 1));
       if (item.length > maxArray) result.push(`[${item.length - maxArray} ITEMS TRUNCATED]`);
+      ancestors.delete(item);
       return result;
     }
     const result = {};
     for (const [key, entry] of Object.entries(item)) {
       result[key] = SENSITIVE_KEY.test(key) ? REDACTED : walk(entry, depth + 1, key);
     }
+    ancestors.delete(item);
     return result;
   };
 

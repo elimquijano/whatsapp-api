@@ -26,6 +26,8 @@ const MAX_AI_VISION_REQUEST_BYTES = 15 * MIB;
 const GROQ_VISION_FALLBACK_MODEL = "qwen/qwen3.6-27b";
 const DEFAULT_NODE_RESPONSE_BYTES = 5 * MIB;
 const MAX_NODE_RESPONSE_BYTES = 25 * MIB;
+const DEFAULT_NODE_RESPONSE_ITEMS = 500;
+const MAX_NODE_RESPONSE_ITEMS = 5000;
 const MAX_NODE_REQUEST_BYTES = 2 * MIB;
 const AI_PROVIDER_HOSTS = {
   openai: new Set(["api.openai.com"]),
@@ -227,6 +229,21 @@ const renderValue = (value, variables) => {
   if (Array.isArray(value)) return value.map((item) => renderValue(item, variables));
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, renderValue(item, variables)]));
   return value;
+};
+
+// A response mapping projects one object to the fields the workflow actually
+// needs. When responsePath selects an array, apply that same projection to
+// every element instead of trying to read fields from the array itself.
+export const mapHttpResponseBody = (selectedBody, responseMapping = {}, maxItems = DEFAULT_NODE_RESPONSE_ITEMS) => {
+  const boundedItems = boundedInteger(maxItems, DEFAULT_NODE_RESPONSE_ITEMS, 1, MAX_NODE_RESPONSE_ITEMS);
+  const selected = Array.isArray(selectedBody) ? selectedBody.slice(0, boundedItems) : selectedBody;
+  if (!responseMapping || typeof responseMapping !== "object" || Array.isArray(responseMapping) || !Object.keys(responseMapping).length) {
+    return selected;
+  }
+  const project = (item) => Object.fromEntries(
+    Object.entries(responseMapping).map(([key, path]) => [key, getPath(item, path)]),
+  );
+  return Array.isArray(selected) ? selected.map(project) : project(selected);
 };
 
 const applyDeclaredNodeOutputs = (result, fields, variables) => {
@@ -1885,15 +1902,18 @@ class AiCrmService {
       if (!response.ok && config.continueOnError !== true) throw new Error(`Nodo ${node.name} respondió HTTP ${response.status}`);
       const selectedBody = config.responsePath ? getPath(body, config.responsePath) : body;
       const responseMapping = config.responseMapping && typeof config.responseMapping === "object" ? config.responseMapping : {};
-      const mappedBody = Object.keys(responseMapping).length
-        ? Object.fromEntries(Object.entries(responseMapping).map(([key, path]) => [key, getPath(selectedBody, path)]))
-        : selectedBody;
+      const mappedBody = mapHttpResponseBody(selectedBody, responseMapping, config.maxResponseItems);
       const stateMapping = config.stateMapping && typeof config.stateMapping === "object" ? config.stateMapping : {};
       const stateUpdates = Object.fromEntries(Object.entries(stateMapping).map(([key, path]) => [key, getPath(selectedBody, path)]));
       return {
         ok: response.ok,
         status: response.status,
         body: mappedBody,
+        responseMeta: Array.isArray(selectedBody) ? {
+          totalItems: selectedBody.length,
+          returnedItems: mappedBody.length,
+          truncated: mappedBody.length < selectedBody.length,
+        } : undefined,
         stateUpdates,
         taskComplete: response.ok && hasSideEffect && config.completeTaskOnSuccess === true,
         effectKey: response.ok ? effectKey : "",

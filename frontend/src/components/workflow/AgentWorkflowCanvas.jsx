@@ -6,7 +6,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Box, Button, Chip, Divider, IconButton, Menu, MenuItem, Paper, Stack, Tooltip, Typography } from '@mui/material';
-import { Add, Code, Hub, Http, Input, Output, PlayArrow, Psychology, Settings, Tune } from '@mui/icons-material';
+import { Add, CenterFocusStrong, Code, Hub, Http, Input, Output, PlayArrow, Psychology, Settings, Tune } from '@mui/icons-material';
 
 const TYPES = {
   agent_input: { label: 'Entrada del agente', color: '#16a34a', icon: Input, fixed: true },
@@ -75,7 +75,7 @@ const toFlowNodes = (permission, nodeStates, selectedNodeKey) => (permission?.no
 
 const serializeEdges = (edges) => edges.map((edge) => ({ source: edge.source, target: edge.target, sourceHandle: edge.sourceHandle || null, targetHandle: edge.targetHandle || null }));
 
-const Editor = ({ permission, nodeStates = {}, selectedNodeKey, onSelectNode, onChange, createNode, onTest }) => {
+const Editor = ({ permission, nodeStates = {}, selectedNodeKey, onSelectNode, onChange, createNode, onTest, onEditTest }) => {
   const wrapperRef = useRef(null);
   const draggingRef = useRef(false);
   const { screenToFlowPosition, fitView, getViewport } = useReactFlow();
@@ -177,7 +177,11 @@ const Editor = ({ permission, nodeStates = {}, selectedNodeKey, onSelectNode, on
       <Controls showInteractive={false} />
       <MiniMap pannable zoomable nodeColor={(node) => TYPES[node.data.type]?.color || '#64748b'} />
       <Panel position="top-left"><Stack direction="row" spacing={0.7} alignItems="center"><Chip size="small" label={`${nodes.length} nodos`} /><Chip size="small" variant="outlined" label={`${edges.length} conexiones`} /><Chip size="small" variant="outlined" label="Usa + en una conexión · doble clic para nodo libre" /></Stack></Panel>
-      <Panel position="top-right"><Stack direction="row" spacing={0.7}><Button size="small" color="success" variant="contained" startIcon={<PlayArrow />} onClick={onTest}>Probar aislado</Button><Button size="small" variant="outlined" onClick={() => fitView({ padding: 0.2, duration: 300 })}>Ajustar vista</Button></Stack></Panel>
+      <Panel position="top-right"><Stack direction="row" spacing={0.4}>
+        <Tooltip title="Editar y guardar datos de prueba"><IconButton size="small" onClick={onEditTest}><Settings /></IconButton></Tooltip>
+        <Tooltip title="Probar con los datos guardados"><IconButton size="small" color="success" onClick={onTest}><PlayArrow /></IconButton></Tooltip>
+        <Tooltip title="Ajustar vista"><IconButton size="small" onClick={() => fitView({ padding: 0.2, duration: 300 })}><CenterFocusStrong /></IconButton></Tooltip>
+      </Stack></Panel>
     </ReactFlow>
 
     <Menu open={Boolean(creator)} onClose={() => setCreator(null)} anchorReference="anchorPosition" anchorPosition={creator?.anchor} MenuListProps={{ dense: true }}>
