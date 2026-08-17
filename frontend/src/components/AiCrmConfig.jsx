@@ -976,26 +976,14 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
     setTesting(true);
     setMessage(null);
     try {
-      const savedResponse = await axios.put(`/api/v1/sessions/${sessionId}/ai/config`, { config });
-      const savedPermissions = (savedResponse.data.config?.permissions || []).map(normalizePermission);
-      setConfig({
-        ...newStarterConfig(),
-        ...savedResponse.data.config,
-        workflowEngineVersion: Number(savedResponse.data.workflowEngineVersion || config.workflowEngineVersion || 0),
-        permissions: savedPermissions,
-        mainWorkflow: savedResponse.data.config?.mainWorkflow || config.mainWorkflow,
-        aiApiToken: '',
-      });
-      onAutomationChange?.(Boolean(savedResponse.data.config?.autoReplyEnabled));
-      const savedTaskKey = savedResponse.data.config?.permissions?.[permissionIndex]?.key || permission.key;
       const response = await axios.post(
-        `/api/v1/sessions/${sessionId}/ai/workflows/tasks/${encodeURIComponent(savedTaskKey)}/test`,
-        testPayload,
+        `/api/v1/sessions/${sessionId}/ai/workflows/tasks/${encodeURIComponent(permission.key)}/test`,
+        { ...testPayload, draftConfig: config, draftPermission: permission },
       );
       const executionId = response.data.executionId || response.data.result?.executionId;
       setTestOpen(false);
       setTab(1);
-      setMessage({ type: 'info', text: 'Prueba segura iniciada. Las acciones que escriben datos y el envío por WhatsApp se simulan.' });
+      setMessage({ type: 'info', text: 'Prueba aislada del borrador iniciada sin guardar. Las acciones que escriben datos y el envío por WhatsApp se simulan.' });
       if (executionId) {
         showExecution({ id: executionId, status: response.data.status || 'running', trigger: 'test', nodeExecutions: [], pollAfterMs: 700 });
         await loadExecutionDetail(executionId);

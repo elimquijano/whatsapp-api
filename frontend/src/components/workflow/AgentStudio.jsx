@@ -194,7 +194,7 @@ const availableVariables = (permission, node) => {
   return { ...contract, nodes };
 };
 
-const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, onDelete, onClose }) => {
+const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, onDelete, onClose, onTest }) => {
   const fallbackInput = useMemo(() => node ? availableVariables(permission, node) : {}, [node, permission]);
   const fallbackOutput = useMemo(() => node ? nodeOutputPreview(node, permission) : {}, [node, permission]);
   if (!node) return <Paper variant="outlined" sx={{ height: '100%', p: 2 }}><Stack spacing={1.5} alignItems="center" justifyContent="center" sx={{ minHeight: 260 }}><Tune color="disabled" sx={{ fontSize: 42 }} /><Typography fontWeight={800}>Selecciona un nodo</Typography><Typography variant="body2" color="text.secondary" align="center">Aquí editarás sus entradas, parámetros, salidas y verás datos reales de ejecución.</Typography></Stack></Paper>;
@@ -207,6 +207,7 @@ const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, 
       <Psychology color="primary" />
       <Box sx={{ flex: 1, minWidth: 0 }}><Typography fontWeight={900} noWrap>{node.name}</Typography><Typography variant="caption" color="text.secondary">{node.type} · {node.key}</Typography></Box>
       {fixed ? <Tooltip title="Nodo estructural fijo"><Lock color="disabled" /></Tooltip> : <Tooltip title="Eliminar nodo"><IconButton color="error" onClick={() => onDelete(node.key)}><Delete /></IconButton></Tooltip>}
+      <Tooltip title="Ejecuta este borrador en modo seguro, sin guardarlo"><Button size="small" color="success" variant="outlined" startIcon={<PlayArrow />} onClick={onTest}>Probar borrador</Button></Tooltip>
       <Tooltip title="Cerrar editor"><IconButton onClick={onClose}><Close /></IconButton></Tooltip>
     </Stack>
     <Divider />
@@ -241,7 +242,7 @@ const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, 
           <TextField size="small" fullWidth label="Guardar respuesta en" value={config.outputField || 'content'} onChange={(event) => updateConfig({ outputField: event.target.value })} />
         </>}
         {node.type === 'http_request' && <>
-          <Alert severity="info" icon={false}><b>HTTP:</b> configura método y URL. Su salida estándar contiene <code>ok</code>, <code>status</code> y <code>body</code>. Puedes mapear un array u objeto completo arrastrándolo al Body.</Alert>
+          <Alert severity="info" icon={false}><b>HTTP, paso a paso:</b> elige el método, pega la URL y agrega Headers o Body solo si la API los solicita. Al probar verás a la derecha la respuesta real con <code>ok</code>, <code>status</code> y <code>body</code>.</Alert>
           <Stack direction="row" spacing={1}><TextField select size="small" label="Método" value={config.method || 'GET'} onChange={(event) => updateConfig({ method: event.target.value })} sx={{ width: 110 }}>{['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((method) => <MenuItem key={method} value={method}>{method}</MenuItem>)}</TextField><DroppableText size="small" fullWidth label="URL" value={config.url || ''} onChange={(event) => updateConfig({ url: event.target.value })} /></Stack>
           <JsonEditor label="Headers" value={config.headers || {}} onChange={(headers) => updateConfig({ headers })} />
           <JsonEditor label="Body" value={config.requestBody || {}} onChange={(requestBody) => updateConfig({ requestBody })} />
@@ -249,8 +250,9 @@ const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, 
             <TextField size="small" fullWidth type="number" label="Respuesta máxima (MB)" value={config.maxResponseMb ?? 5} onChange={(event) => updateConfig({ maxResponseMb: Number(event.target.value) })} inputProps={{ min: 1, max: 25, step: 1 }} helperText="Hasta 25 MB. Mapea solo los campos necesarios cuando la API devuelva listas grandes." />
             <TextField size="small" fullWidth type="number" label="Tiempo máximo (segundos)" value={Math.round((config.timeoutMs ?? 30000) / 1000)} onChange={(event) => updateConfig({ timeoutMs: Number(event.target.value) * 1000 })} inputProps={{ min: 1, max: 120, step: 1 }} helperText="Hasta 120 segundos para APIs lentas." />
           </Stack>
-          <TextField size="small" fullWidth label="Ruta de la respuesta" value={config.responsePath || ''} onChange={(event) => updateConfig({ responsePath: event.target.value })} />
-          <JsonEditor label="Mapeo de respuesta" value={config.responseMapping || {}} onChange={(responseMapping) => updateConfig({ responseMapping })} />
+          <TextField size="small" fullWidth label="Qué parte de la respuesta usar (opcional)" value={config.responsePath || ''} onChange={(event) => updateConfig({ responsePath: event.target.value })} placeholder="body.data" helperText="Déjalo vacío para usar la respuesta completa. Ejemplo: si la API devuelve { body: { data: [...] } }, escribe body.data para quedarte solo con la lista." />
+          <JsonEditor label="Renombrar o elegir campos de la respuesta (opcional)" value={config.responseMapping || {}} onChange={(responseMapping) => updateConfig({ responseMapping })} rows={5} />
+          <Alert severity="info" icon={false}>Ejemplo de mapeo: <code>{'{ "cliente": "{{body.name}}", "identificador": "{{body.id}}" }'}</code>. La palabra de la izquierda será el nombre que usarán los siguientes nodos; la variable de la derecha indica de dónde sale el dato. Puedes dejarlo vacío.</Alert>
         </>}
         {node.type === 'script' && <>
           <Alert severity="info" icon={false}><b>Script:</b> <code>input.nodeInput</code> contiene la entrada inmediata o mapeada; <code>input.nodes</code> contiene todos los nodos anteriores. Debes terminar con <code>return {'{ ... }'}</code>. Declara abajo esos campos de salida para que el siguiente nodo pueda usarlos antes de hacer una prueba.</Alert>
@@ -300,7 +302,7 @@ const AgentStudio = ({
       </Box>
     </Stack>}
     <Dialog open={Boolean(permission && selectedNodeKey)} onClose={() => onSelectNode('')} fullWidth maxWidth="xl" PaperProps={{ sx: { height: 'min(88dvh, 900px)', maxHeight: '95dvh', overflow: 'hidden' } }}>
-      <NodeInspector node={permission?.nodes?.find((node) => node.key === selectedNodeKey)} trace={trace} permission={permission} onUpdatePermission={onUpdatePermission} onUpdate={onUpdateNode} onDelete={onDeleteNode} onClose={() => onSelectNode('')} />
+      <NodeInspector node={permission?.nodes?.find((node) => node.key === selectedNodeKey)} trace={trace} permission={permission} onUpdatePermission={onUpdatePermission} onUpdate={onUpdateNode} onDelete={onDeleteNode} onClose={() => onSelectNode('')} onTest={onTest} />
     </Dialog>
   </Box>;
 };
