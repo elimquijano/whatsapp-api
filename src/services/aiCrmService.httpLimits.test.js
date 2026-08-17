@@ -2,25 +2,31 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mapHttpResponseBody, resolveHttpNodeLimits } from "./aiCrmService.js";
 
-test("los nodos HTTP no recortan la descarga que usan los nodos siguientes", () => {
-  assert.deepEqual(resolveHttpNodeLimits({ timeoutMs: 90000 }), {
-    maxResponseBytes: Number.MAX_SAFE_INTEGER,
+const MIB = 1024 * 1024;
+
+test("los nodos HTTP aceptan respuestas grandes configuradas en MB", () => {
+  assert.deepEqual(resolveHttpNodeLimits({ maxResponseMb: 50, timeoutMs: 90000 }), {
+    maxResponseBytes: 50 * MIB,
     timeoutMs: 90000,
   });
 });
 
-test("los nodos HTTP conservan el tiempo máximo por defecto", () => {
+test("los nodos HTTP usan un límite amplio pero seguro por defecto", () => {
   assert.deepEqual(resolveHttpNodeLimits(), {
-    maxResponseBytes: Number.MAX_SAFE_INTEGER,
+    maxResponseBytes: 25 * MIB,
     timeoutMs: 30000,
   });
 });
 
-test("el tiempo de nodos HTTP se acota en el servidor", () => {
-  assert.deepEqual(resolveHttpNodeLimits({ timeoutMs: 999999 }), {
-    maxResponseBytes: Number.MAX_SAFE_INTEGER,
+test("los límites de nodos HTTP se acotan en el servidor", () => {
+  assert.deepEqual(resolveHttpNodeLimits({ maxResponseMb: 999, timeoutMs: 999999 }), {
+    maxResponseBytes: 100 * MIB,
     timeoutMs: 120000,
   });
+});
+
+test("se conserva compatibilidad con el límite expresado en bytes", () => {
+  assert.equal(resolveHttpNodeLimits({ maxResponseBytes: 8 * MIB }).maxResponseBytes, 8 * MIB);
 });
 
 test("el mapeo de respuesta conserva solo los campos elegidos de cada elemento de un array", () => {
