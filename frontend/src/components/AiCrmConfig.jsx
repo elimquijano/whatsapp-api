@@ -971,7 +971,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
     }
   };
 
-  const runTest = async () => {
+  const runTest = async ({ keepEditorOpen = false } = {}) => {
     if (!permission?.key) return;
     setTesting(true);
     setMessage(null);
@@ -981,8 +981,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
         { ...testPayload, draftConfig: config, draftPermission: permission },
       );
       const executionId = response.data.executionId || response.data.result?.executionId;
-      setTestOpen(false);
-      setTab(1);
+      if (!keepEditorOpen) setTestOpen(false);
       setMessage({ type: 'info', text: 'Prueba aislada del borrador iniciada sin guardar. Las acciones que escriben datos y el envío por WhatsApp se simulan.' });
       if (executionId) {
         showExecution({ id: executionId, status: response.data.status || 'running', trigger: 'test', nodeExecutions: [], pollAfterMs: 700 });
@@ -1198,6 +1197,10 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
             activeExecution={activeExecution}
             createNode={(type, position) => makeNode(type, position, permission?.nodes || [])}
             onTest={() => setTestOpen(true)}
+            onTestNode={() => runTest({ keepEditorOpen: true })}
+            testing={testing}
+            testMessage={testPayload.message || ''}
+            onTestMessageChange={(message) => setTestPayload((current) => ({ ...current, message }))}
           />
         )}
 
@@ -1656,7 +1659,7 @@ const WorkflowTestDialog = ({ open, onClose, onRun, loading, task, payload, setP
       <DialogActions>
         <Button onClick={onClose} disabled={loading}>Cancelar</Button>
         <Button variant="contained" color="success" startIcon={loading ? <CircularProgress color="inherit" size={16} /> : <PlayArrow />} onClick={onRun} disabled={loading || !payload.message?.trim()}>
-          {loading ? 'Iniciando...' : 'Guardar e iniciar prueba'}
+          {loading ? 'Iniciando...' : 'Iniciar prueba sin guardar'}
         </Button>
       </DialogActions>
     </Dialog>
