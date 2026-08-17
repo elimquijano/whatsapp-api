@@ -8,6 +8,7 @@ import {
 
 const SENSITIVE_KEY = /(authorization|api[-_]?key|token|secret|password|credential|cookie|authvalue)/i;
 const REDACTED = '[REDACTADO]';
+const MAX_VISIBLE_ARRAY_ITEMS = 5;
 
 const sanitizeUrl = (value) => {
   if (typeof value !== 'string' || !/^https?:\/\//i.test(value)) return value;
@@ -25,7 +26,11 @@ const sanitizeUrl = (value) => {
 export const sanitizeTraceData = (value, parentKey = '', depth = 0) => {
   if (SENSITIVE_KEY.test(parentKey)) return REDACTED;
   if (depth > 12) return '[LIMITE DE PROFUNDIDAD]';
-  if (Array.isArray(value)) return value.map((item) => sanitizeTraceData(item, parentKey, depth + 1));
+  if (Array.isArray(value)) {
+    const preview = value.slice(0, MAX_VISIBLE_ARRAY_ITEMS).map((item) => sanitizeTraceData(item, parentKey, depth + 1));
+    Object.defineProperty(preview, '_totalItems', { value: value.length, enumerable: false });
+    return preview;
+  }
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [
       key,
@@ -117,7 +122,7 @@ const TreeRow = ({ name, value, path, mode, depth = 0, defaultOpen = true }) => 
           {name}
         </Typography>
         {isContainer ? (
-          <Chip size="small" label={Array.isArray(value) ? `${value.length} items` : `${children.length} campos`} sx={{ height: 18, fontSize: 9 }} />
+          <Chip size="small" label={Array.isArray(value) ? `${value._totalItems ?? value.length} items` : `${children.length} campos`} sx={{ height: 18, fontSize: 9 }} />
         ) : (
           <Typography
             component="span"
@@ -144,6 +149,11 @@ const TreeRow = ({ name, value, path, mode, depth = 0, defaultOpen = true }) => 
           defaultOpen={defaultOpen}
         />
       ))}
+      {isContainer && open && Array.isArray(value) && (value._totalItems ?? value.length) > value.length && (
+        <Typography sx={{ pl: `${(depth + 1) * 14 + 20}px`, py: 0.5, fontSize: 10.5, color: 'text.secondary' }}>
+          Vista ligera: se muestran 5 de {value._totalItems} elementos
+        </Typography>
+      )}
     </Box>
   );
 };

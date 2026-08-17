@@ -3,7 +3,7 @@ import {
   Alert, Box, Button, Chip, Dialog, Divider, IconButton, MenuItem, Paper, Stack, Tab, Tabs,
   TextField, Tooltip, Typography,
 } from '@mui/material';
-import { Add, Close, Delete, Lock, PlayArrow, Psychology, Tune } from '@mui/icons-material';
+import { Add, Close, Delete, Lock, PlayArrow, Psychology, Save, Tune } from '@mui/icons-material';
 import AgentWorkflowCanvas from './AgentWorkflowCanvas';
 import JsonDataTree from './JsonDataTree';
 
@@ -194,30 +194,46 @@ const availableVariables = (permission, node) => {
   return { ...contract, nodes };
 };
 
-const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, onDelete, onClose }) => {
+const NodeInspector = ({ node, trace, nodeOutputs, permission, onSaveNode, onDelete, onClose }) => {
+  const [draftName, setDraftName] = useState(node?.name || '');
+  const [draftConfig, setDraftConfig] = useState(node?.config || {});
+  const [draftSchema, setDraftSchema] = useState(permission?.stateSchema || {});
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setDraftName(node?.name || '');
+    setDraftConfig(structuredClone(node?.config || {}));
+    setDraftSchema(structuredClone(permission?.stateSchema || {}));
+  }, [node?.key]);
   const fallbackInput = useMemo(() => node ? availableVariables(permission, node) : {}, [node, permission]);
   const fallbackOutput = useMemo(() => node ? nodeOutputPreview(node, permission) : {}, [node, permission]);
   if (!node) return <Paper variant="outlined" sx={{ height: '100%', p: 2 }}><Stack spacing={1.5} alignItems="center" justifyContent="center" sx={{ minHeight: 260 }}><Tune color="disabled" sx={{ fontSize: 42 }} /><Typography fontWeight={800}>Selecciona un nodo</Typography><Typography variant="body2" color="text.secondary" align="center">Aquí editarás sus entradas, parámetros, salidas y verás datos reales de ejecución.</Typography></Stack></Paper>;
-  const config = node.config || {};
+  const config = draftConfig;
   const fixed = FIXED_TYPES.has(node.type);
-  const updateConfig = (patch) => onUpdate(node.key, { config: { ...config, ...patch } });
-  const updateSchema = (patch) => onUpdatePermission({ stateSchema: { ...(permission.stateSchema || {}), ...patch } });
+  const updateConfig = (patch) => setDraftConfig((current) => ({ ...current, ...patch }));
+  const updateSchema = (patch) => setDraftSchema((current) => ({ ...current, ...patch }));
+  const saveDraft = async () => {
+    setSaving(true);
+    const saved = await onSaveNode(node.key, { name: draftName, config: draftConfig }, draftSchema);
+    setSaving(false);
+    if (saved) onClose();
+  };
   return <Paper variant="outlined" sx={{ height: '100%', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
     <Stack direction="row" alignItems="center" spacing={1} sx={{ p: 1.5 }}>
       <Psychology color="primary" />
-      <Box sx={{ flex: 1, minWidth: 0 }}><Typography fontWeight={900} noWrap>{node.name}</Typography><Typography variant="caption" color="text.secondary">{node.type} · {node.key}</Typography></Box>
+      <Box sx={{ flex: 1, minWidth: 0 }}><Typography fontWeight={900} noWrap>{draftName || node.name}</Typography><Typography variant="caption" color="text.secondary">{node.type} · {node.key}</Typography></Box>
+      <Tooltip title="Guardar nodo y salir"><span><IconButton color="primary" onClick={saveDraft} disabled={saving}><Save /></IconButton></span></Tooltip>
       {fixed ? <Tooltip title="Nodo estructural fijo"><Lock color="disabled" /></Tooltip> : <Tooltip title="Eliminar nodo"><IconButton color="error" onClick={() => onDelete(node.key)}><Delete /></IconButton></Tooltip>}
       <Tooltip title="Cerrar editor"><IconButton onClick={onClose}><Close /></IconButton></Tooltip>
     </Stack>
     <Divider />
     <Box sx={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '230px minmax(360px, 1fr) 230px' }, overflow: { xs: 'auto', lg: 'hidden' } }}>
-      <Box sx={{ minHeight: 0, overflow: 'auto', borderRight: { lg: '1px solid' }, borderColor: 'divider', bgcolor: 'surface.soft' }}><DataPanel title="ENTRADA · ARRASTRA CAMPOS" real={trace?.input} fallback={fallbackInput} /></Box>
+      <Box sx={{ minHeight: 0, overflow: 'auto', borderRight: { lg: '1px solid' }, borderColor: 'divider', bgcolor: 'surface.soft' }}><DataPanel title="SALIDAS DISPONIBLES · ARRASTRA CAMPOS" real={nodeOutputs} fallback={fallbackInput.nodes || {}} basePath="nodes" /></Box>
       <Stack spacing={1.5} sx={{ p: 1.75, minHeight: 0, overflow: 'auto' }}>
-        <TextField size="small" fullWidth label="Nombre del nodo" value={node.name || ''} onChange={(event) => onUpdate(node.key, { name: event.target.value })} />
+        <TextField size="small" fullWidth label="Nombre del nodo" value={draftName} onChange={(event) => setDraftName(event.target.value)} />
 
         {node.type === 'agent_input' && <>
           <Alert severity="info">Este nodo recibe los datos simulados durante una prueba aislada y los datos reales del chat cuando el agente está conectado al workflow principal.</Alert>
-          <FieldEditor title="Campos que entrega la entrada" fields={permission.stateSchema?.inputFields || []} onChange={(inputFields) => updateSchema({ inputFields })} />
+          <FieldEditor title="Campos que entrega la entrada" fields={draftSchema.inputFields || []} onChange={(inputFields) => updateSchema({ inputFields })} />
         </>}
 
         {!FIXED_TYPES.has(node.type) && <MappingEditor title="Entradas elegidas para este nodo" value={config.inputMapping || {}} onChange={(inputMapping) => updateConfig({ inputMapping })} />}
@@ -241,16 +257,18 @@ const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, 
           <TextField size="small" fullWidth label="Guardar respuesta en" value={config.outputField || 'content'} onChange={(event) => updateConfig({ outputField: event.target.value })} />
         </>}
         {node.type === 'http_request' && <>
-          <Alert severity="info" icon={false}><b>HTTP:</b> configura método y URL. Su salida estándar contiene <code>ok</code>, <code>status</code> y <code>body</code>. Puedes mapear un array u objeto completo arrastrándolo al Body.</Alert>
+          <Alert severity="info" icon={false}><b>HTTP:</b> la salida contiene <code>ok</code>, <code>status</code> y <code>body</code>. Si la ruta de respuesta apunta a un array, el mapeo se aplica automáticamente a cada objeto para conservar solo los campos elegidos.</Alert>
           <Stack direction="row" spacing={1}><TextField select size="small" label="Método" value={config.method || 'GET'} onChange={(event) => updateConfig({ method: event.target.value })} sx={{ width: 110 }}>{['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((method) => <MenuItem key={method} value={method}>{method}</MenuItem>)}</TextField><DroppableText size="small" fullWidth label="URL" value={config.url || ''} onChange={(event) => updateConfig({ url: event.target.value })} /></Stack>
           <JsonEditor label="Headers" value={config.headers || {}} onChange={(headers) => updateConfig({ headers })} />
           <JsonEditor label="Body" value={config.requestBody || {}} onChange={(requestBody) => updateConfig({ requestBody })} />
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-            <TextField size="small" fullWidth type="number" label="Respuesta máxima (MB)" value={config.maxResponseMb ?? 5} onChange={(event) => updateConfig({ maxResponseMb: Number(event.target.value) })} inputProps={{ min: 1, max: 25, step: 1 }} helperText="Hasta 25 MB. Mapea solo los campos necesarios cuando la API devuelva listas grandes." />
+            <TextField size="small" fullWidth type="number" label="Respuesta máxima (MB)" value={config.maxResponseMb ?? 5} onChange={(event) => updateConfig({ maxResponseMb: Number(event.target.value) })} inputProps={{ min: 1, max: 25, step: 1 }} helperText="Límite de descarga, no de cantidad de registros. Hasta 25 MB." />
             <TextField size="small" fullWidth type="number" label="Tiempo máximo (segundos)" value={Math.round((config.timeoutMs ?? 30000) / 1000)} onChange={(event) => updateConfig({ timeoutMs: Number(event.target.value) * 1000 })} inputProps={{ min: 1, max: 120, step: 1 }} helperText="Hasta 120 segundos para APIs lentas." />
           </Stack>
-          <TextField size="small" fullWidth label="Ruta de la respuesta" value={config.responsePath || ''} onChange={(event) => updateConfig({ responsePath: event.target.value })} />
-          <JsonEditor label="Mapeo de respuesta" value={config.responseMapping || {}} onChange={(responseMapping) => updateConfig({ responseMapping })} />
+          <TextField size="small" fullWidth type="number" label="Máximo de registros conservados" value={config.maxResponseItems ?? 500} onChange={(event) => updateConfig({ maxResponseItems: Number(event.target.value) })} inputProps={{ min: 1, max: 5000, step: 50 }} helperText="Por defecto 500; máximo 5000. La salida incluye responseMeta con el total y si fue recortada." />
+          <TextField size="small" fullWidth label="Ruta del array u objeto" value={config.responsePath || ''} onChange={(event) => updateConfig({ responsePath: event.target.value })} helperText="Ejemplo: data.productos. Déjalo vacío si la respuesta raíz ya es el array." />
+          <JsonEditor label="Campos que quieres conservar" value={config.responseMapping || {}} onChange={(responseMapping) => updateConfig({ responseMapping })} rows={8} />
+          <Alert severity="info" icon={false}>Ejemplo: <code>{'{"id":"id","nombre":"datos.nombre","precio":"datos.precio"}'}</code>. El proceso conserva hasta el límite configurado; la interfaz solo dibuja 5 elementos para mantenerse rápida.</Alert>
         </>}
         {node.type === 'script' && <>
           <Alert severity="info" icon={false}><b>Script:</b> <code>input.nodeInput</code> contiene la entrada inmediata o mapeada; <code>input.nodes</code> contiene todos los nodos anteriores. Debes terminar con <code>return {'{ ... }'}</code>. Declara abajo esos campos de salida para que el siguiente nodo pueda usarlos antes de hacer una prueba.</Alert>
@@ -266,7 +284,7 @@ const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, 
         {node.type === 'agent_output' && <>
           <Alert severity="success">Esta salida devuelve el resultado al workflow principal. El envío real ocurre únicamente en el nodo fijo Enviar WhatsApp de la sección 3.</Alert>
           <MappingEditor title="Resultado final del agente" value={config.outputMapping || {}} onChange={(outputMapping) => updateConfig({ outputMapping })} />
-          <FieldEditor title="Contrato de salida del agente" fields={permission.stateSchema?.outputFields || []} onChange={(outputFields) => updateSchema({ outputFields })} sourceHelp="Nombre del campo producido por el mapeo final." />
+          <FieldEditor title="Contrato de salida del agente" fields={draftSchema.outputFields || []} onChange={(outputFields) => updateSchema({ outputFields })} sourceHelp="Nombre del campo producido por el mapeo final." />
         </>}
       </Stack>
       <Box sx={{ minHeight: 0, overflow: 'auto', borderLeft: { lg: '1px solid' }, borderColor: 'divider', bgcolor: 'surface.soft' }}><DataPanel title="SALIDA DEL NODO" real={trace?.output} fallback={fallbackOutput} basePath={trace?.output ? '' : `nodes.${node.key}`} /></Box>
@@ -276,10 +294,14 @@ const NodeInspector = ({ node, trace, permission, onUpdatePermission, onUpdate, 
 
 const AgentStudio = ({
   permissions, permissionIndex, onSelectPermission, permission, onCreate, onDeletePermission,
-  onUpdatePermission, selectedNodeKey, onSelectNode, onUpdateNode, onDeleteNode,
-  nodeStates, activeExecution, createNode, onTest,
+  onUpdatePermission, selectedNodeKey, onSelectNode, onSaveNode, onDeleteNode,
+  nodeStates, activeExecution, createNode, onTest, onEditTest,
 }) => {
   const trace = activeExecution?.nodeExecutions?.find((item) => (item.scope === 'task' || !item.scope) && item.nodeKey === selectedNodeKey);
+  const executedNodeOutputs = Object.fromEntries((activeExecution?.nodeExecutions || [])
+    .filter((item) => (item.scope === 'task' || !item.scope) && item.status === 'success')
+    .map((item) => [item.nodeKey, item.output]));
+  const nodeOutputs = Object.keys(executedNodeOutputs).length ? executedNodeOutputs : null;
   return <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '220px minmax(0, 1fr)' }, gridTemplateRows: { xs: 'auto minmax(680px, 1fr)', lg: 'minmax(720px, calc(100dvh - 225px))' }, minHeight: 0, border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
     <Paper square variant="outlined" sx={{ border: 0, borderRight: { lg: '1px solid' }, borderColor: 'divider', p: 1.25, overflow: 'auto' }}>
       <Button fullWidth variant="contained" startIcon={<Add />} onClick={onCreate}>Nuevo agente</Button>
@@ -296,11 +318,11 @@ const AgentStudio = ({
         <TextField size="small" fullWidth label="Cuándo debe elegirlo el orquestador" value={permission.description || ''} onChange={(event) => onUpdatePermission({ description: event.target.value })} sx={{ mt: 1 }} />
       </Paper>
       <Box sx={{ flex: 1, minHeight: 0, position: 'relative' }}>
-        <AgentWorkflowCanvas permission={permission} nodeStates={nodeStates} selectedNodeKey={selectedNodeKey} onSelectNode={onSelectNode} onChange={onUpdatePermission} createNode={createNode} onTest={onTest} />
+        <AgentWorkflowCanvas permission={permission} nodeStates={nodeStates} selectedNodeKey={selectedNodeKey} onSelectNode={onSelectNode} onChange={onUpdatePermission} createNode={createNode} onTest={onTest} onEditTest={onEditTest} />
       </Box>
     </Stack>}
     <Dialog open={Boolean(permission && selectedNodeKey)} onClose={() => onSelectNode('')} fullWidth maxWidth="xl" PaperProps={{ sx: { height: 'min(88dvh, 900px)', maxHeight: '95dvh', overflow: 'hidden' } }}>
-      <NodeInspector node={permission?.nodes?.find((node) => node.key === selectedNodeKey)} trace={trace} permission={permission} onUpdatePermission={onUpdatePermission} onUpdate={onUpdateNode} onDelete={onDeleteNode} onClose={() => onSelectNode('')} />
+      <NodeInspector node={permission?.nodes?.find((node) => node.key === selectedNodeKey)} trace={trace} nodeOutputs={nodeOutputs} permission={permission} onSaveNode={onSaveNode} onDelete={onDeleteNode} onClose={() => onSelectNode('')} />
     </Dialog>
   </Box>;
 };

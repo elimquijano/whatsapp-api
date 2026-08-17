@@ -16,6 +16,7 @@ import MainWorkflowEditor from './workflow/MainWorkflowEditor';
 import AgentWorkflowCanvas from './workflow/AgentWorkflowCanvas';
 import AgentStudio from './workflow/AgentStudio';
 import { createWorkflowBundle, parseWorkflowBundle } from '../utils/workflowTransfer';
+import useSmartPolling from '../hooks/useSmartPolling';
 
 const nodeCatalog = [
   { type: 'agent_input', label: 'Entrada del agente', icon: <Send sx={{ transform: 'rotate(180deg)' }} />, color: '#16a34a', fixed: true },
@@ -555,6 +556,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
   const importInputRef = useRef(null);
 
   const permission = config.permissions?.[permissionIndex];
+  const testPayloadStorageKey = sessionId && permission?.key ? `workflow-test:${sessionId}:${permission.key}` : '';
   const selectedNode = permission?.nodes?.find((node) => node.key === selectedNodeKey);
   const selectedNodeExecution = activeExecution?.nodeExecutions?.find((item) => (
     item.nodeKey === selectedNodeKey && (item.scope === 'task' || !item.scope)
@@ -666,11 +668,13 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
     loadExecutions({ selectLatest: true });
   }, [open, tab, sessionId, tab === 1 ? permissionIndex : 'global']);
 
-  useEffect(() => {
-    if (!open || ![1, 2].includes(tab) || (tab === 1 && !permission?.key) || executionIsLive(activeExecution)) return undefined;
-    const timer = window.setInterval(() => loadExecutions({ autoFollow: true }), tab === 2 ? 700 : 1200);
-    return () => window.clearInterval(timer);
-  }, [open, tab, sessionId, tab === 1 ? permissionIndex : 'global', activeExecution?.status]);
+  // The execution list is only a history/discovery view. Refresh it at a low
+  // frequency; live executions have their own lightweight detail poll below.
+  // Smart polling also pauses in background tabs and never overlaps requests.
+  useSmartPolling(() => {
+    if (!open || ![1, 2].includes(tab) || (tab === 1 && !permission?.key) || executionIsLive(activeExecution)) return;
+    return loadExecutions({ autoFollow: true });
+  }, 15000, { runImmediately: false });
 
   useEffect(() => {
     if (!open || !selectedExecutionId || !executionIsLive(activeExecution)) return undefined;
@@ -938,6 +942,55 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
     finally { setLoading(false); }
   };
 
+  const saveNodeDraft = async (nodeKey, nodePatch, stateSchema) => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const nextConfig = {
+        ...config,
+        permissions: config.permissions.map((item, index) => index !== permissionIndex ? item : {
+          ...item,
+          stateSchema,
+          nodes: item.nodes.map((node) => node.key === nodeKey ? { ...node, ...nodePatch } : node),
+        }),
+      };
+      const response = await axios.put(`/api/v1/sessions/${sessionId}/ai/config`, { config: nextConfig });
+      setConfig({
+        ...newStarterConfig(),
+        ...response.data.config,
+        workflowEngineVersion: Number(response.data.workflowEngineVersion || nextConfig.workflowEngineVersion || 0),
+        permissions: (response.data.config?.permissions || []).map(normalizePermission),
+        mainWorkflow: response.data.config?.mainWorkflow || nextConfig.mainWorkflow,
+        aiApiToken: '',
+      });
+      setMessage({ type: 'success', text: 'Nodo guardado. Ya puedes probarlo con ▶.' });
+      return true;
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.error || 'No se pudo guardar el nodo' });
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!testPayloadStorageKey) return;
+    try {
+      const saved = window.localStorage.getItem(testPayloadStorageKey);
+      if (saved) setTestPayload(JSON.parse(saved));
+    } catch { /* Un borrador local inválido no debe impedir editar ni probar. */ }
+  }, [testPayloadStorageKey]);
+
+  const saveTestPayload = () => {
+    try {
+      if (testPayloadStorageKey) window.localStorage.setItem(testPayloadStorageKey, JSON.stringify(testPayload));
+      setTestOpen(false);
+      setMessage({ type: 'success', text: 'Datos de prueba guardados localmente. El botón ▶ solo ejecutará la prueba.' });
+    } catch {
+      setMessage({ type: 'error', text: 'El navegador no pudo guardar los datos de prueba localmente.' });
+    }
+  };
+
   const exportWorkflows = () => {
     const bundle = createWorkflowBundle(config, sessionId);
     const blob = new Blob([`${JSON.stringify(bundle, null, 2)}\n`], { type: 'application/json' });
@@ -972,24 +1025,12 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
   };
 
   const runTest = async () => {
-    if (!permission?.key) return;
+    if (!permission?.key || testing) return;
     setTesting(true);
     setMessage(null);
     try {
-      const savedResponse = await axios.put(`/api/v1/sessions/${sessionId}/ai/config`, { config });
-      const savedPermissions = (savedResponse.data.config?.permissions || []).map(normalizePermission);
-      setConfig({
-        ...newStarterConfig(),
-        ...savedResponse.data.config,
-        workflowEngineVersion: Number(savedResponse.data.workflowEngineVersion || config.workflowEngineVersion || 0),
-        permissions: savedPermissions,
-        mainWorkflow: savedResponse.data.config?.mainWorkflow || config.mainWorkflow,
-        aiApiToken: '',
-      });
-      onAutomationChange?.(Boolean(savedResponse.data.config?.autoReplyEnabled));
-      const savedTaskKey = savedResponse.data.config?.permissions?.[permissionIndex]?.key || permission.key;
       const response = await axios.post(
-        `/api/v1/sessions/${sessionId}/ai/workflows/tasks/${encodeURIComponent(savedTaskKey)}/test`,
+        `/api/v1/sessions/${sessionId}/ai/workflows/tasks/${encodeURIComponent(permission.key)}/test`,
         testPayload,
       );
       const executionId = response.data.executionId || response.data.result?.executionId;
@@ -1202,12 +1243,13 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
             onUpdatePermission={updatePermission}
             selectedNodeKey={selectedNodeKey}
             onSelectNode={setSelectedNodeKey}
-            onUpdateNode={updateNode}
+            onSaveNode={saveNodeDraft}
             onDeleteNode={removeNode}
             nodeStates={displayNodeStates}
             activeExecution={activeExecution}
             createNode={(type, position) => makeNode(type, position, permission?.nodes || [])}
-            onTest={() => setTestOpen(true)}
+            onTest={runTest}
+            onEditTest={() => setTestOpen(true)}
           />
         )}
 
@@ -1545,7 +1587,7 @@ const AiCrmConfig = ({ open = true, onClose, sessionId, onAutomationChange, vari
       <WorkflowTestDialog
         open={testOpen}
         onClose={() => setTestOpen(false)}
-        onRun={runTest}
+        onSave={saveTestPayload}
         loading={testing}
         task={permission}
         payload={testPayload}
@@ -1626,14 +1668,14 @@ const GlobalNodeInspector = ({ node, nodeState, trace, permission, linkedPermiss
   );
 };
 
-const WorkflowTestDialog = ({ open, onClose, onRun, loading, task, payload, setPayload }) => {
+const WorkflowTestDialog = ({ open, onClose, onSave, loading, task, payload, setPayload }) => {
   const [advanced, setAdvanced] = useState(false);
   const setField = (field, value) => setPayload((current) => ({ ...current, [field]: value }));
   const setContact = (field, value) => setPayload((current) => ({ ...current, contact: { ...current.contact, [field]: value } }));
   return (
     <Dialog open={open} onClose={loading ? undefined : onClose} fullWidth maxWidth="md">
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <PlayArrow color="success" /> Probar agente de forma aislada
+        <Settings color="primary" /> Datos para la prueba aislada
         {task && <Chip size="small" label={task.name} />}
       </DialogTitle>
       <DialogContent dividers>
@@ -1665,9 +1707,7 @@ const WorkflowTestDialog = ({ open, onClose, onRun, loading, task, payload, setP
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={loading}>Cancelar</Button>
-        <Button variant="contained" color="success" startIcon={loading ? <CircularProgress color="inherit" size={16} /> : <PlayArrow />} onClick={onRun} disabled={loading || !payload.message?.trim()}>
-          {loading ? 'Iniciando...' : 'Guardar e iniciar prueba'}
-        </Button>
+        <Tooltip title="Guardar estos datos sin ejecutar la prueba"><IconButton color="primary" onClick={onSave} disabled={loading || !payload.message?.trim()}><Save /></IconButton></Tooltip>
       </DialogActions>
     </Dialog>
   );
@@ -1718,8 +1758,8 @@ const NodeEditor = ({ node, trace, execution, updateNode, renameNode, removeNode
         <JsonField label="Headers JSON" value={node.config.headers} onChange={(value) => setConfig('headers', value)} />
         <JsonField label="Query params JSON" value={node.config.queryParams} onChange={(value) => setConfig('queryParams', value)} />
         <JsonField label="Body JSON" value={node.config.requestBody} onChange={(value) => setConfig('requestBody', value)} rows={6} />
-        <TextField size="small" label="Ruta de datos en la respuesta" value={node.config.responsePath || ''} onChange={(event) => setConfig('responsePath', event.target.value)} helperText="Opcional. Ejemplo: data.products" />
-        <JsonField label="Mapeo de respuesta" value={node.config.responseMapping || {}} onChange={(value) => setConfig('responseMapping', value)} rows={4} helperText={'Elige y renombra datos del JSON recibido. Ejemplo: {"nombre":"name","precio":"price","stock":"stock"}'} />
+        <TextField size="small" label="Ruta del array u objeto" value={node.config.responsePath || ''} onChange={(event) => setConfig('responsePath', event.target.value)} helperText="Ejemplo: data.products. Vacío si la respuesta raíz ya es el array." />
+        <JsonField label="Campos que quieres conservar" value={node.config.responseMapping || {}} onChange={(value) => setConfig('responseMapping', value)} rows={5} helperText={'Se aplica a cada objeto del array. Ejemplo: {"id":"id","nombre":"details.name","precio":"details.price"}. Vacío conserva todo.'} />
         <JsonField label="Guardar campos en el estado" value={node.config.stateMapping || {}} onChange={(value) => setConfig('stateMapping', value)} rows={4} helperText={'Recuerda datos para el siguiente mensaje. Ejemplo: {"productId":"id","precioConfirmado":"price"}'} />
         <TextField select size="small" label="Política cuando un dato no aparece" value={node.config.sourcePolicy || 'open_world'} onChange={(event) => setConfig('sourcePolicy', event.target.value)}>
           <MenuItem value="open_world">Abierta: no se sabe</MenuItem>
