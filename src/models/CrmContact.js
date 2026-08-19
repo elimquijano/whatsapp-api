@@ -17,6 +17,7 @@ const CrmContact = sequelize.define("CrmContact", {
   status: { type: DataTypes.STRING, allowNull: false, defaultValue: "new" },
   priority: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   automationMode: { type: DataTypes.STRING, allowNull: false, defaultValue: "inherit" },
+  webhookMode: { type: DataTypes.STRING(16), allowNull: false, defaultValue: "inherit" },
   notes: { type: DataTypes.TEXT("long"), allowNull: true },
   tags: jsonField("tags", []),
   metadata: jsonField("metadata", {}),

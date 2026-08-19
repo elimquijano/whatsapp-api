@@ -21,6 +21,7 @@ import { publishCrmUpdate } from "../services/crmRealtimeService.js";
 
 const statuses = new Set(["new", "interested", "urgent", "follow_up", "customer", "not_interested"]);
 const automationModes = new Set(["inherit", "automatic", "human"]);
+const webhookModes = new Set(["inherit", "enabled", "disabled"]);
 const importMethods = new Set(["GET", "POST"]);
 const IMPORT_TIMEOUT_MS = 20000;
 const MAX_IMPORT_RESPONSE_BYTES = 10 * 1024 * 1024;
@@ -156,6 +157,71 @@ export const getContactMessages = async (req, res) => {
   } catch (error) { res.status(500).json({ success: false, error: error.message }); }
 };
 
+const professionalSession = async (req, res) => {
+  if (!await professionalGuard(req, res)) return null;
+  const session = await ownedSession(req.user.id, req.params.sessionId);
+  if (!session) res.status(404).json({ success: false, error: "Sesión no encontrada" });
+  return session;
+};
+
+export const getStoredMessagesByPhone = async (req, res) => {
+  try {
+    const session = await professionalSession(req, res);
+    if (!session) return;
+    const phone = normalizePhoneNumber(req.params.phone);
+    if (!phone) return res.status(400).json({ success: false, error: "El número del chat no es válido" });
+    const perPage = Math.min(200, Math.max(1, Number(req.query.perPage || req.query.limit) || 50));
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const where = { whatsappSessionId: session.id, contactNumber: phone };
+    const { count, rows } = await AiMessage.findAndCountAll({
+      where,
+      order: [["messageTimestamp", "DESC"], ["id", "DESC"]],
+      limit: perPage,
+      offset: (page - 1) * perPage,
+      attributes: { exclude: ["rawPayload"] },
+    });
+    res.json({
+      success: true,
+      sessionId: session.sessionId,
+      phone,
+      messages: rows.reverse(),
+      pagination: { page, perPage, total: count, totalPages: Math.ceil(count / perPage) },
+    });
+  } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+};
+
+export const deleteStoredMessageMonth = async (req, res) => {
+  try {
+    const session = await professionalSession(req, res);
+    if (!session) return;
+    const phone = normalizePhoneNumber(req.params.phone);
+    const month = String(req.params.month || "");
+    if (!phone) return res.status(400).json({ success: false, error: "El número del chat no es válido" });
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).json({ success: false, error: "El mes debe usar el formato YYYY-MM" });
+    const [year, monthNumber] = month.split("-").map(Number);
+    const start = new Date(Date.UTC(year, monthNumber - 1, 1));
+    const end = new Date(Date.UTC(year, monthNumber, 1));
+    const deleted = await AiMessage.destroy({
+      where: { whatsappSessionId: session.id, contactNumber: phone, messageTimestamp: { [Op.gte]: start, [Op.lt]: end } },
+    });
+    const contact = await CrmContact.findOne({ where: { whatsappSessionId: session.id, phone } });
+    if (contact) {
+      const latest = await AiMessage.findOne({ where: { whatsappSessionId: session.id, contactNumber: phone }, order: [["messageTimestamp", "DESC"]] });
+      await contact.update({ lastMessageAt: latest?.messageTimestamp || null, lastMessagePreview: latest?.content?.slice(0, 500) || null, unreadCount: 0 });
+    }
+    res.json({ success: true, sessionId: session.sessionId, phone, month, deleted });
+  } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+};
+
+export const rejectIncomingCall = async (req, res) => {
+  try {
+    const session = await professionalSession(req, res);
+    if (!session) return;
+    const call = await sessionManager.rejectIncomingCall(req.user.id, session.sessionId, req.body?.callId);
+    res.json({ success: true, sessionId: session.sessionId, callId: call.callId, status: "rejected" });
+  } catch (error) { res.status(error.statusCode || 500).json({ success: false, error: error.message }); }
+};
+
 const mediaMessageDetails = (payload = {}) => {
   const message = payload.message?.ephemeralMessage?.message
     || payload.message?.viewOnceMessageV2?.message
@@ -203,6 +269,7 @@ export const updateContact = async (req, res) => {
     for (const field of ["name", "notes", "tags"]) if (req.body[field] !== undefined) values[field] = req.body[field];
     if (statuses.has(req.body.status)) values.status = req.body.status;
     if (automationModes.has(req.body.automationMode)) values.automationMode = req.body.automationMode;
+    if (webhookModes.has(req.body.webhookMode)) values.webhookMode = req.body.webhookMode;
     if (req.body.priority !== undefined) values.priority = Math.min(5, Math.max(0, Number(req.body.priority)));
     await contact.update(values);
     res.json({ success: true, sessionId: contact.whatsappSession.sessionId, contact });
@@ -235,10 +302,6 @@ export const sendManualMessage = async (req, res) => {
     }
     const jid = phoneJidFromNumber(contact.phone);
     if (!jid) return res.status(400).json({ success: false, error: "El contacto no tiene un número de WhatsApp válido" });
-    // Tomar el chat como humano debe quedar persistido antes de enviar. Así,
-    // una respuesta IA que ya estaba procesándose lo detecta en su validación
-    // final y no compite con el mensaje manual.
-    await contact.update({ automationMode: "human" });
     let quoted;
     if (body.quotedMessageId) {
       const quotedRecord = await AiMessage.findOne({ where: { id: body.quotedMessageId, crmContactId: contact.id } });

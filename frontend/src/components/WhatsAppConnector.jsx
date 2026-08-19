@@ -5,7 +5,7 @@ import {
 } from '@mui/material';
 import {
   WhatsApp, Logout, CloudDone,
-  CloudOff, QrCodeScanner, Add, Settings, Chat, Campaign, Send, Code
+  CloudOff, QrCodeScanner, Add, Chat, Campaign, Send, Code
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
@@ -94,13 +94,13 @@ const WhatsAppConnector = () => {
     }
   };
 
-  const toggleAi = async (sessionId, enabled) => {
+  const toggleWebhook = async (sessionId, enabled) => {
     setError('');
     try {
-      const response = await axios.put(`/api/v1/sessions/${sessionId}/ai/toggle`, { enabled });
-      setSessions((current) => current.map((session) => session.sessionId === sessionId ? { ...session, aiAutoReplyEnabled: response.data.autoReplyEnabled } : session));
+      const response = await axios.put(`/api/v1/sessions/${sessionId}/webhook/toggle`, { enabled });
+      setSessions((current) => current.map((session) => session.sessionId === sessionId ? { ...session, webhookEnabled: response.data.webhookEnabled } : session));
     } catch (err) {
-      setError(err.response?.data?.error || 'No se pudo cambiar el modo de respuesta');
+      setError(err.response?.data?.error || 'No se pudo cambiar el envío al webhook');
     }
   };
 
@@ -251,13 +251,12 @@ const WhatsAppConnector = () => {
                   </Box>
                 </CardContent>
                 <CardActions sx={{ justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap', gap: 0.5, p: 1.5, bgcolor: 'surface.soft', borderTop: '1px solid', borderColor: 'divider' }}>
-                  {user?.planData?.features?.includes('ai_crm') && <>
+                  {user?.planData?.features?.includes('webhook') && <>
                     <FormControlLabel
                       sx={{ mr: 'auto', ml: 0, maxWidth: '100%', '& .MuiFormControlLabel-label': { fontSize: 13 } }}
-                      control={<Switch checked={Boolean(session.aiAutoReplyEnabled)} onChange={(event) => toggleAi(session.sessionId, event.target.checked)} />}
-                      label={session.aiAutoReplyEnabled ? 'IA general activa' : 'IA general pausada'}
+                      control={<Switch checked={Boolean(session.webhookEnabled)} onChange={(event) => toggleWebhook(session.sessionId, event.target.checked)} />}
+                      label={session.webhookEnabled ? 'Webhook activo' : 'Webhook pausado'}
                     />
-                    <Button size="small" startIcon={<Settings />} onClick={() => navigate(`/dashboard/sessions/${encodeURIComponent(session.sessionId)}/ai`)}>Configurar IA</Button>
                   </>}
                   {!['disconnected', 'logged_out', 'error'].includes(session.status) && <Button 
                     size="small" 

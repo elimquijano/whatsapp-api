@@ -32,7 +32,7 @@ export const getProfile = async (req, res) => {
 
 export const updateWebhook = async (req, res) => {
   try {
-    const { webhookUrl } = req.body;
+    const { webhookUrl, webhookEnabled } = req.body;
     const sessionId = String(req.params?.sessionId || req.body.sessionId || "").trim();
     if (!sessionId) {
       return res.status(400).json({ success: false, error: "Debes indicar la sesión de WhatsApp" });
@@ -52,9 +52,10 @@ export const updateWebhook = async (req, res) => {
       return res.status(404).json({ success: false, error: "La sesión no está registrada" });
     }
     sessionRecord.webhookUrl = webhookUrl || null;
+    if (webhookEnabled !== undefined) sessionRecord.webhookEnabled = Boolean(webhookEnabled);
     await sessionRecord.save();
 
-    res.json({ success: true, message: "Webhook de la sesión actualizado correctamente", sessionId, webhookUrl });
+    res.json({ success: true, message: "Webhook de la sesión actualizado correctamente", sessionId, webhookUrl, webhookEnabled: sessionRecord.webhookEnabled });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

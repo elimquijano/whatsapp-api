@@ -392,7 +392,7 @@ const Landing = () => {
                 <Typography variant="body2" sx={{ color: '#94a3b8', mb: 4 }}>La API completa para una línea de WhatsApp.</Typography>
                 <Divider sx={{ mb: 4, borderColor: 'rgba(255,255,255,0.1)' }} />
                 <Stack spacing={2} sx={{ mb: 4, flexGrow: 1 }}>
-                  {['1 sesión de WhatsApp', 'Webhook de la sesión', 'Todos los endpoints', 'Texto, imágenes, audio, video y archivos'].map((item, i) => (
+                  {['3 sesiones de WhatsApp', 'Webhook independiente por sesión', 'Todos los endpoints', 'Texto, imágenes, audio, video y archivos'].map((item, i) => (
                     <Box key={i} sx={{ display: 'flex', alignItems: 'center' }}>
                       <CheckCircle sx={{ fontSize: 20, mr: 1.5, color: '#38bdf8' }} />
                       <Typography variant="body2" sx={{ fontWeight: 500 }}>{item}</Typography>
@@ -413,10 +413,10 @@ const Landing = () => {
                    <Typography variant="h3" sx={{ fontWeight: 900, display: 'inline' }}>${billingCycle === 'monthly' ? '7' : '67'}</Typography>
                    <Typography variant="body1" color="text.secondary" sx={{ display: 'inline' }}>/{billingCycle === 'monthly' ? 'mes' : 'año'}</Typography>
                 </Box>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>Cinco líneas, automatización y herramientas comerciales.</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>Diez líneas, API ampliada y herramientas comerciales.</Typography>
                 <Divider sx={{ mb: 4 }} />
                 <Stack spacing={2} sx={{ mb: 4, flexGrow: 1 }}>
-                  {['Todo lo incluido en Premium', '5 sesiones simultáneas', 'Webhook separado por cada sesión', 'IA + CRM con workflows visuales', 'Bandeja de conversaciones con atención humana/IA', 'Campañas e importación de clientes'].map((item, i) => (
+                  {['Todo lo incluido en Premium', '10 sesiones simultáneas', 'Webhook separado por cada sesión', 'API de historial y llamadas', 'Bandeja de conversaciones', 'Campañas e importación de clientes'].map((item, i) => (
                     <Box key={i} sx={{ display: 'flex', alignItems: 'center' }}>
                       <CheckCircle sx={{ fontSize: 20, mr: 1.5, color: '#cbd5e1' }} />
                       <Typography variant="body2" sx={{ fontWeight: 500 }}>{item}</Typography>
