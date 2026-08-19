@@ -16,10 +16,13 @@ const SessionApiPage = () => {
       <Alert severity="info" sx={{ mb: 2 }}>
         Todas las pruebas usarán exclusivamente la sesión <strong>{sessionId}</strong>. Los archivos aceptan URL en <code>payload</code>, data URI en <code>payload</code> o Base64 puro mediante <code>base64</code> + <code>mimetype</code>.
       </Alert>
+      <Alert severity="success" sx={{ mb: 2 }}>
+        <strong>Las nuevas APIs ya están aquí:</strong> al final de la colección encontrarás <strong>Historial del chat</strong>, <strong>Eliminar mes</strong>, <strong>Estado de eliminación</strong> y <strong>Rechazar llamada</strong>. Puedes editar el número, mes, UUID o callId antes de ejecutar cada ejemplo.
+      </Alert>
       <ApiKeyDisplay />
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
         <Typography variant="body2" component="code" sx={{ overflowWrap: 'anywhere' }}>
-          /api/v1/sessions/{sessionId}/messages/...
+          /api/v1/sessions/{sessionId}/messages/... · /chats/.../messages · /message-deletion-jobs/... · /calls/reject
         </Typography>
       </Paper>
       <ApiConsole mode="private" userToken={localStorage.getItem('token')} sessionId={sessionId} />
