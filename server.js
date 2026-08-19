@@ -223,6 +223,7 @@ app.put("/api/v1/sessions/:sessionId/webhook", authenticateToken, userController
 app.get("/api/v1/sessions/:sessionId/ai/config", authenticateToken, aiCrmController.getConfig);
 app.put("/api/v1/sessions/:sessionId/ai/config", authenticateToken, aiCrmController.saveConfig);
 app.put("/api/v1/sessions/:sessionId/ai/toggle", authenticateToken, aiCrmController.toggleAutomation);
+app.put("/api/v1/sessions/:sessionId/webhook/toggle", authenticateToken, aiCrmController.toggleAutomation);
 app.post("/api/v1/sessions/:sessionId/ai/presets/sales", authenticateToken, aiCrmController.applySalesPreset);
 app.get("/api/v1/sessions/:sessionId/ai/messages", authenticateToken, aiCrmController.getMessages);
 app.get("/api/v1/sessions/:sessionId/ai/workflow-executions", authenticateToken, aiCrmController.listWorkflowExecutions);
@@ -246,6 +247,9 @@ app.get("/api/v1/sessions/:sessionId/crm/events", authenticateToken, async (req,
   req.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
 });
 app.get("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages", authenticateToken, crmController.getContactMessages);
+app.get("/api/v1/sessions/:sessionId/chats/:phone/messages", authenticateToken, crmController.getStoredMessagesByPhone);
+app.delete("/api/v1/sessions/:sessionId/chats/:phone/messages/month/:month", authenticateToken, crmController.deleteStoredMessageMonth);
+app.post("/api/v1/sessions/:sessionId/calls/reject", authenticateToken, crmController.rejectIncomingCall);
 app.get("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages/:messageId/media", authenticateToken, crmController.getMessageMedia);
 app.put("/api/v1/sessions/:sessionId/crm/contacts/:contactId", authenticateToken, crmController.updateContact);
 app.put("/api/v1/sessions/:sessionId/crm/contacts/:contactId/read", authenticateToken, crmController.markRead);
@@ -338,9 +342,6 @@ const listWhatsAppSessions = async (req, res) => {
   try {
     const sessionRecords = await WhatsAppSession.findAll({ where: { userId: req.user.id } });
     const webhooksBySession = new Map(sessionRecords.map(record => [record.sessionId, record.webhookUrl || ""]));
-    const aiConfigs = await AiSessionConfig.findAll({ where: { whatsappSessionId: sessionRecords.map(record => record.id) } });
-    const aiBySession = new Map(aiConfigs.map(config => [config.whatsappSessionId, config.autoReplyEnabled]));
-    const recordByPublicId = new Map(sessionRecords.map(record => [record.sessionId, record]));
     const liveBySession = new Map(sessionManager.getUserSessions(req.user.id).map(session => [session.sessionId, session]));
     const sessions = sessionRecords.map(record => {
       const live = liveBySession.get(record.sessionId);
@@ -356,7 +357,7 @@ const listWhatsAppSessions = async (req, res) => {
         lastError: live?.lastDisconnect?.message || null,
         disconnectCode: live?.lastDisconnect?.statusCode || null,
         webhookUrl: webhooksBySession.get(record.sessionId) || "",
-        aiAutoReplyEnabled: Boolean(aiBySession.get(recordByPublicId.get(record.sessionId)?.id))
+        webhookEnabled: record.webhookEnabled !== false
       };
     });
     res.json({ success: true, sessions });
@@ -507,7 +508,7 @@ const startServer = async () => {
       where: { name: "Free Trial" },
       defaults: { 
         name: "Free Trial", 
-        maxSessions: 1, 
+        maxSessions: 1,
         price: 0, 
         features: ["text", "media", "files"] 
       }
@@ -517,7 +518,7 @@ const startServer = async () => {
       where: { name: "Premium" },
       defaults: { 
         name: "Premium", 
-        maxSessions: 1, 
+        maxSessions: 3,
         price: 3, 
         features: ["text", "media", "files", "webhook"]
       }
@@ -527,7 +528,7 @@ const startServer = async () => {
       where: { name: "Profesional" },
       defaults: { 
         name: "Profesional", 
-        maxSessions: 5, // Un límite técnico razonable pero no comercializado
+        maxSessions: 10,
         price: 7, 
         features: ["text", "media", "files", "webhook", "ai_crm"]
       }
@@ -535,8 +536,8 @@ const startServer = async () => {
 
     // FORZAR ACTUALIZACIÓN DE LÓGICA COMERCIAL
     await trialPlan.update({ maxSessions: 1, price: 0, features: ["text", "media", "files", "webhook"] });
-    await premiumPlan.update({ maxSessions: 1, price: 3, features: ["text", "media", "files", "webhook"] });
-    await professionalPlan.update({ maxSessions: 5, price: 7, features: ["text", "media", "files", "webhook", "ai_crm"] });
+    await premiumPlan.update({ maxSessions: 3, price: 3, features: ["text", "media", "files", "webhook"] });
+    await professionalPlan.update({ maxSessions: 10, price: 7, features: ["text", "media", "files", "webhook", "ai_crm"] });
 
     // Migra los nombres anteriores y conserva las asignaciones de usuarios.
     for (const [legacyName, targetPlan] of [["Trial", trialPlan], ["Basic", premiumPlan], ["Professional", professionalPlan]]) {

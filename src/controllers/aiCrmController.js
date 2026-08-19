@@ -364,13 +364,11 @@ export const saveConfig = async (req, res) => {
 
 export const toggleAutomation = async (req, res) => {
   try {
-    if (!await requireProfessional(req.user.id)) return res.status(403).json({ success: false, error: "La IA CRM está disponible únicamente en el plan Profesional" });
     const session = await WhatsAppSession.findOne({ where: { userId: req.user.id, sessionId: req.params.sessionId } });
     if (!session) return res.status(404).json({ success: false, error: "Sesión no encontrada" });
-    const config = await ensureIntroductoryAiConfig(session.id);
-    config.autoReplyEnabled = Boolean(req.body.enabled);
-    await config.save();
-    res.json({ success: true, autoReplyEnabled: config.autoReplyEnabled });
+    session.webhookEnabled = Boolean(req.body.enabled);
+    await session.save();
+    res.json({ success: true, webhookEnabled: session.webhookEnabled });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

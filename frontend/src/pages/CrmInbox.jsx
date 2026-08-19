@@ -7,7 +7,7 @@ import {
 } from '@mui/material';
 import {
   ArrowBack, AttachFile, CallMade, CallMissed, CallReceived, Close, CloudDownload, InfoOutlined, LocationOn, PersonOutline,
-  Refresh, Reply, Search, Send, SmartToy, WhatsApp
+  Refresh, Reply, Search, Send, Webhook, WhatsApp
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useOutletContext, useParams } from 'react-router-dom';
@@ -22,17 +22,18 @@ const statusInfo = {
 };
 
 const automationInfo = (contact, sessionAutoEnabled) => {
-  const inherited = contact?.automationMode === 'inherit';
-  const enabled = contact?.automationMode === 'automatic' || (inherited && Boolean(sessionAutoEnabled));
+  const mode = contact?.webhookMode || 'inherit';
+  const inherited = mode === 'inherit';
+  const enabled = mode === 'enabled' || (inherited && Boolean(sessionAutoEnabled));
   if (inherited) return {
     enabled,
-    label: enabled ? 'Hereda IA' : 'Hereda humano',
-    description: enabled ? 'IA activa por la configuración general' : 'IA pausada por la configuración general',
+    label: enabled ? 'Hereda webhook activo' : 'Hereda webhook pausado',
+    description: enabled ? 'Los eventos se envían por la configuración general' : 'Los eventos no se envían por la configuración general',
   };
   return {
     enabled,
-    label: enabled ? 'IA en este chat' : 'Atención humana',
-    description: enabled ? 'Excepción: la IA responde solo en este chat' : 'Excepción: este chat lo atiende una persona',
+    label: enabled ? 'Webhook activo' : 'Webhook pausado',
+    description: enabled ? 'Los eventos de este chat se envían al webhook' : 'Los eventos de este chat no se envían al webhook',
   };
 };
 
@@ -226,7 +227,7 @@ const ChatComposer = memo(({ sending, replyingTo, onCancelReply, onSend }) => {
             <IconButton size="small" onClick={() => { onCancelReply(); setAttachment(null); }} aria-label="Quitar respuesta y adjunto"><Close fontSize="small" /></IconButton>
           </Stack>
         </Paper>}
-        <TextField fullWidth multiline maxRows={4} size="small" placeholder="Escribe una respuesta…" helperText="Al enviar, este chat pasará a atención humana." value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); } }} />
+        <TextField fullWidth multiline maxRows={4} size="small" placeholder="Escribe una respuesta…" helperText="El mensaje enviado también se notificará al webhook si está activo." value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); } }} />
       </Box>
       <IconButton color="primary" disabled={sending || (!draft.trim() && !attachment)} onClick={submit} aria-label="Enviar mensaje" sx={{ mb: 2.75, border: 1, borderColor: 'divider' }}>
         {sending ? <CircularProgress size={22} /> : <Send />}
@@ -565,15 +566,6 @@ const CrmInbox = () => {
         ...media,
       });
       setReplyingTo(null);
-      setSelected((current) => {
-        if (String(current?.id) !== contactId) return current;
-        const next = { ...current, automationMode: 'human' };
-        selectedRef.current = next;
-        return next;
-      });
-      setContacts((current) => current.map((item) => (
-        String(item.id) === contactId ? { ...item, automationMode: 'human' } : item
-      )));
       if (data.message) setMessages((current) => current.map((item) => item.id === optimisticId ? data.message : item));
       window.setTimeout(() => { loadMessages(); loadContacts(); }, 250);
       return true;
@@ -591,18 +583,19 @@ const CrmInbox = () => {
     setError('');
     setSessionAutomationSaving(true);
     try {
-      await axios.put(`/api/v1/sessions/${sessionId}/ai/toggle`, { enabled });
+      await axios.put(`/api/v1/sessions/${sessionId}/webhook/toggle`, { enabled });
       await reloadSessions();
     } catch (err) {
-      setError(err.response?.data?.error || 'No se pudo cambiar el modo general de IA');
+      setError(err.response?.data?.error || 'No se pudo cambiar el envío general al webhook');
     } finally {
       setSessionAutomationSaving(false);
     }
   };
 
-  const selectedChatAutoEnabled = selected?.automationMode === 'automatic'
-    || (selected?.automationMode === 'inherit' && Boolean(selectedSession?.aiAutoReplyEnabled));
-  const selectedAutomation = automationInfo(selected, selectedSession?.aiAutoReplyEnabled);
+  const selectedWebhookMode = selected?.webhookMode || 'inherit';
+  const selectedChatAutoEnabled = selectedWebhookMode === 'enabled'
+    || (selectedWebhookMode === 'inherit' && Boolean(selectedSession?.webhookEnabled));
+  const selectedAutomation = automationInfo(selected, selectedSession?.webhookEnabled);
 
   const handleContactSelect = (contact) => {
     messagesRequestRef.current.controller?.abort();
@@ -635,7 +628,7 @@ const CrmInbox = () => {
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="h5" fontWeight={900} noWrap>Conversaciones</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ display: { xs: 'none', md: 'block' } }}>
-            Atiende un chat personalmente mientras la IA continúa con los demás.
+            Decide qué chats envían eventos al webhook; cada chat puede heredar el ajuste general.
           </Typography>
         </Box>
         <Stack
@@ -657,25 +650,25 @@ const CrmInbox = () => {
                 alignItems: 'center',
                 gap: 0.75,
                 cursor: sessionAutomationSaving ? 'wait' : 'pointer',
-                bgcolor: selectedSession?.aiAutoReplyEnabled ? 'success.main' : 'background.paper',
-                color: selectedSession?.aiAutoReplyEnabled ? 'success.contrastText' : 'text.primary',
+                bgcolor: selectedSession?.webhookEnabled ? 'success.main' : 'background.paper',
+                color: selectedSession?.webhookEnabled ? 'success.contrastText' : 'text.primary',
                 transition: (theme) => theme.transitions.create(['background-color', 'color']),
               }}
             >
-              <SmartToy fontSize="small" />
+              <Webhook fontSize="small" />
               <Box sx={{ lineHeight: 1, minWidth: 82 }}>
-                <Typography variant="caption" component="div" fontWeight={800} color="inherit">IA general</Typography>
+                <Typography variant="caption" component="div" fontWeight={800} color="inherit">Webhook general</Typography>
                 <Typography variant="caption" component="div" color="inherit" sx={{ opacity: 0.78 }}>
-                  {selectedSession?.aiAutoReplyEnabled ? 'Activada' : 'Pausada'}
+                  {selectedSession?.webhookEnabled ? 'Activado' : 'Pausado'}
                 </Typography>
               </Box>
               <Switch
                 size="small"
                 color="default"
-                checked={Boolean(selectedSession?.aiAutoReplyEnabled)}
+                checked={Boolean(selectedSession?.webhookEnabled)}
                 disabled={!sessionId || sessionAutomationSaving}
                 onChange={(event) => toggleSessionAutomation(event.target.checked)}
-                inputProps={{ 'aria-label': 'Cambiar el modo general de IA de la sesión' }}
+                inputProps={{ 'aria-label': 'Cambiar el envío general al webhook' }}
                 sx={{
                   '& .MuiSwitch-switchBase.Mui-checked': { color: 'common.white' },
                   '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: 'common.white' },
@@ -764,7 +757,7 @@ const CrmInbox = () => {
             <Box sx={{ flexGrow: { lg: 1 }, minHeight: 0, overflowY: { xs: 'visible', lg: 'auto' } }}>
               {contacts.map((contact) => {
                 const contactStatus = statusInfo[contact.status] || statusInfo.new;
-                const contactAutomation = automationInfo(contact, selectedSession?.aiAutoReplyEnabled);
+                const contactAutomation = automationInfo(contact, selectedSession?.webhookEnabled);
                 const isNeutralStatus = contactStatus.tone === 'default';
                 const isSelected = String(selected?.id) === String(contact.id);
                 return (
@@ -864,18 +857,18 @@ const CrmInbox = () => {
                       size="small"
                       color={selectedAutomation.enabled ? 'success' : 'default'}
                       variant="outlined"
-                      icon={selectedAutomation.enabled ? <SmartToy /> : undefined}
+                      icon={selectedAutomation.enabled ? <Webhook /> : undefined}
                       label={selectedAutomation.label}
                       sx={{ display: { xs: 'none', sm: 'inline-flex' } }}
                     />
                   </Tooltip>
-                  <Tooltip title={selectedChatAutoEnabled ? 'Pausar IA solo en este chat' : 'Activar IA solo en este chat'}>
+                  <Tooltip title={selectedChatAutoEnabled ? 'Pausar webhook solo en este chat' : 'Activar webhook solo en este chat'}>
                     <Switch
                       size="small"
                       color="success"
                       checked={selectedChatAutoEnabled}
-                      onChange={(event) => updateContact({ automationMode: event.target.checked ? 'automatic' : 'human' })}
-                      inputProps={{ 'aria-label': 'Cambiar modo de atención del chat' }}
+                      onChange={(event) => updateContact({ webhookMode: event.target.checked ? 'enabled' : 'disabled' })}
+                      inputProps={{ 'aria-label': 'Cambiar envío al webhook para este chat' }}
                     />
                   </Tooltip>
                   <Tooltip title="Ver ficha del cliente">
@@ -970,14 +963,14 @@ const CrmInbox = () => {
                     fullWidth
                     size="small"
                     select
-                    label="Modo de atención"
-                    value={selected.automationMode}
-                    onChange={(event) => updateContact({ automationMode: event.target.value })}
+                    label="Envío al webhook"
+                    value={selected.webhookMode || 'inherit'}
+                    onChange={(event) => updateContact({ webhookMode: event.target.value })}
                     helperText={selectedAutomation.description}
                   >
                     <MenuItem value="inherit">Heredar de sesión</MenuItem>
-                    <MenuItem value="automatic">IA automática</MenuItem>
-                    <MenuItem value="human">Atención humana</MenuItem>
+                    <MenuItem value="enabled">Webhook activo</MenuItem>
+                    <MenuItem value="disabled">Webhook pausado</MenuItem>
                   </TextField>
                   <Paper variant="outlined" elevation={0} sx={{ p: 1.25, bgcolor: 'background.default' }}>
                     <Stack direction="row" spacing={1} alignItems="flex-start" sx={{ mb: 1.25 }}>

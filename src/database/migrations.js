@@ -22,6 +22,19 @@ export const runDatabaseMigrations = async (sequelize) => {
     type: DataTypes.STRING,
     allowNull: true,
   });
+  await addColumnIfMissing(queryInterface, sessionTable, sessionDescription, "webhookEnabled", {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
+  });
+
+  const contactTable = "CrmContacts";
+  const contactDescription = await queryInterface.describeTable(contactTable);
+  await addColumnIfMissing(queryInterface, contactTable, contactDescription, "webhookMode", {
+    type: DataTypes.STRING(16),
+    allowNull: false,
+    defaultValue: "inherit",
+  });
 
   const table = "CrmCampaigns";
   const description = await queryInterface.describeTable(table);

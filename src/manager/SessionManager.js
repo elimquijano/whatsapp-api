@@ -13,10 +13,12 @@ import pino from "pino";
 import QRCode from "qrcode";
 import User from "../models/User.js";
 import WhatsAppSession from "../models/WhatsAppSession.js";
+import CrmContact from "../models/CrmContact.js";
 import aiCrmService from "../services/aiCrmService.js";
 import { normalizePhoneNumber, resolveWhatsAppIdentity } from "../utils/whatsappIdentity.js";
 import { repairStoredLidContacts } from "../services/crmIdentityService.js";
 import { publishCrmUpdate } from "../services/crmRealtimeService.js";
+import { buildCallWebhook, buildMessageStatusWebhook, buildMessageWebhook, postWebhook, shouldDeliverWebhook } from "../services/webhookService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,6 +43,7 @@ class SessionManager {
     this.reconnectTimers = new Map();
     this.reconnectAttempts = new Map();
     this.sessionGenerations = new Map();
+    this.incomingCalls = new Map();
     this.waVersionCache = null;
     this.logger = pino({
       level: "info",
@@ -232,7 +235,7 @@ class SessionManager {
           const user = await User.findByPk(userId);
           const sessionRecord = await WhatsAppSession.findOne({ where: { userId, sessionId } });
           const webhookUrl = sessionRecord?.webhookUrl || user?.sessionWebhooks?.[sessionId];
-          if (!user) return;
+          if (!user || !sessionRecord) return;
 
           // Verificar expiración del plan
           if (user.expirationDate && new Date() > new Date(user.expirationDate)) {
@@ -266,40 +269,28 @@ class SessionManager {
               }, "Numero real de WhatsApp resuelto");
             }
 
-            // Prepare payload
-            const payload = {
-              event: msg.key.fromMe ? 'message.sent' : 'message.received',
-              instanceId: sessionId,
-              data: {
-                id: msg.key.id,
-                from: identity.phoneJid,
-                senderJid: identity.phoneJid,
-                senderNumber: identity.phone,
-                pushName: msg.pushName,
-                message: msg.message,
-                timestamp: msg.messageTimestamp,
-                fromMe: msg.key.fromMe
-              }
-            };
+            const payload = buildMessageWebhook({ sessionId, msg, identity, upsertType: type });
 
-            // IA CRM directa: guarda todos los mensajes en BD y responde solo si
-            // el switch automático de esta sesión está activado.
+            // El CRM conserva su bandeja local, pero nunca ejecuta IA. Cualquier
+            // automatización externa consume exactamente el mismo webhook.
             if (identity.resolved) {
               tasks.push(aiCrmService
-                .handleMessage({ userId, sessionId, sock, msg, identity, allowAutomation: type === 'notify' })
+                .handleMessage({ userId, sessionId, sock, msg, identity, allowAutomation: false })
                 .catch((err) => {
                   const log = err.code === "AI_MODEL_INVALID_JSON" ? this.logger.warn.bind(this.logger) : this.logger.error.bind(this.logger);
                   log({ userId, sessionId, code: err.code || "AI_CRM_ERROR", error: err.message }, "Fallo procesando IA CRM");
                 }));
             }
 
-            // El webhook comercial anterior sigue disponible e independiente.
-            if (webhookUrl && type === 'notify') {
-              fetch(webhookUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-              }).catch(err => this.logger.error(`Webhook error for user ${userId}:`, err.message));
+            if (webhookUrl) {
+              const contact = identity.resolved ? await CrmContact.findOne({
+                where: { whatsappSessionId: sessionRecord.id, phone: identity.phone },
+                attributes: ["webhookMode"],
+              }) : null;
+              if (shouldDeliverWebhook(sessionRecord.webhookEnabled, contact?.webhookMode)) {
+                tasks.push(postWebhook({ url: webhookUrl, payload, logger: this.logger, userId, sessionId })
+                  .catch(err => this.logger.error({ userId, sessionId, error: err.message }, "Error enviando webhook")));
+              }
             }
           }
           await Promise.allSettled(tasks);
@@ -311,6 +302,11 @@ class SessionManager {
 
       sock.ev.on("call", async (calls) => {
         if (!isCurrentSession()) return;
+        const user = await User.findByPk(userId);
+        const sessionRecord = await WhatsAppSession.findOne({ where: { userId, sessionId } });
+        if (!user || !sessionRecord) return;
+        if (user.expirationDate && new Date() > new Date(user.expirationDate)) return;
+        const webhookUrl = sessionRecord?.webhookUrl || user?.sessionWebhooks?.[sessionId];
         for (const call of calls || []) {
           try {
             const ownPhone = normalizePhoneNumber(sock.user?.id);
@@ -329,9 +325,44 @@ class SessionManager {
               this.logger.warn({ userId, sessionId, callId: call.id }, "Llamada omitida porque no se pudo resolver el número");
               continue;
             }
+            const callKey = `${userId}:${sessionId}:${call.id}`;
+            if (!fromMe && ["offer", "ringing"].includes(String(call.status).toLowerCase())) {
+              this.incomingCalls.set(callKey, { callId: call.id, callerJid: call.from || call.chatId || identity.phoneJid });
+            } else if (["accept", "reject", "timeout", "terminate"].includes(String(call.status).toLowerCase())) {
+              this.incomingCalls.delete(callKey);
+            }
             await aiCrmService.handleCall({ userId, sessionId, call, identity, fromMe });
+            const contact = await CrmContact.findOne({ where: { whatsappSessionId: sessionRecord.id, phone: identity.phone } });
+            if (webhookUrl && shouldDeliverWebhook(sessionRecord.webhookEnabled, contact?.webhookMode)) {
+              await postWebhook({
+                url: webhookUrl,
+                payload: buildCallWebhook({ sessionId, call, identity, fromMe }),
+                logger: this.logger,
+                userId,
+                sessionId,
+              });
+            }
           } catch (error) {
             this.logger.error({ userId, sessionId, callId: call?.id, error: error.message }, "Error procesando llamada de WhatsApp");
+          }
+        }
+      });
+
+      sock.ev.on("messages.update", async (updates) => {
+        if (!isCurrentSession()) return;
+        const user = await User.findByPk(userId);
+        const sessionRecord = await WhatsAppSession.findOne({ where: { userId, sessionId } });
+        const webhookUrl = sessionRecord?.webhookUrl || user?.sessionWebhooks?.[sessionId];
+        if (!user || !sessionRecord || !webhookUrl) return;
+        for (const update of updates || []) {
+          try {
+            const identity = await resolveWhatsAppIdentity({ sock, msg: { key: update.key } });
+            if (!identity.resolved) continue;
+            const contact = await CrmContact.findOne({ where: { whatsappSessionId: sessionRecord.id, phone: identity.phone } });
+            if (!shouldDeliverWebhook(sessionRecord.webhookEnabled, contact?.webhookMode)) continue;
+            await postWebhook({ url: webhookUrl, payload: buildMessageStatusWebhook({ sessionId, update, identity }), logger: this.logger, userId, sessionId });
+          } catch (error) {
+            this.logger.error({ userId, sessionId, error: error.message }, "Error enviando actualización de mensaje al webhook");
           }
         }
       });
@@ -466,6 +497,22 @@ class SessionManager {
   getSession(rawUserId, sessionId) {
     const userId = String(rawUserId);
     return this.sessions.get(userId)?.get(sessionId);
+  }
+
+  async rejectIncomingCall(rawUserId, sessionId, requestedCallId) {
+    const userId = String(rawUserId);
+    const session = this.getSession(userId, sessionId);
+    if (!session?.sock || session.status !== "open") throw Object.assign(new Error("La sesión de WhatsApp no está conectada"), { statusCode: 409 });
+    const prefix = `${userId}:${sessionId}:`;
+    const matches = [...this.incomingCalls.entries()].filter(([key]) => key.startsWith(prefix));
+    const selected = requestedCallId
+      ? matches.find(([, call]) => String(call.callId) === String(requestedCallId))
+      : matches.at(-1);
+    if (!selected) throw Object.assign(new Error("No hay una llamada entrante activa con ese identificador"), { statusCode: 404 });
+    const [key, call] = selected;
+    await session.sock.rejectCall(call.callId, call.callerJid);
+    this.incomingCalls.delete(key);
+    return call;
   }
 
   getUserSessions(rawUserId) {

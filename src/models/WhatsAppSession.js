@@ -29,6 +29,11 @@ const WhatsAppSession = sequelize.define("WhatsAppSession", {
     type: DataTypes.STRING(2048),
     allowNull: true,
   },
+  webhookEnabled: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
+  },
 }, {
   indexes: [{ unique: true, fields: ["userId", "sessionId"] }],
 });

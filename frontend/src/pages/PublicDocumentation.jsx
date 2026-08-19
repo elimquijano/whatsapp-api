@@ -49,6 +49,9 @@ const PublicDocumentation = () => {
     { id: 'messages-doc-url', label: 'Documentos (URL)' },
     { id: 'messages-doc-base64', label: 'Documentos (Base64)' },
     { id: 'messages-audio', label: 'Audio / Voz' },
+    { id: 'stored-messages', label: 'Historial (Profesional)' },
+    { id: 'delete-message-month', label: 'Eliminar mes (Profesional)' },
+    { id: 'reject-call', label: 'Rechazar llamada (Profesional)' },
     { id: 'webhooks', label: 'Webhooks' },
   ];
 
@@ -219,9 +222,44 @@ const PublicDocumentation = () => {
 }`} />
           </Section>
 
+          <Section id="stored-messages" title="7. Obtener mensajes guardados (Profesional)">
+            <Typography paragraph>
+              Obtiene el historial guardado de un número dentro de una sesión. Usa <code>page</code> y <code>perPage</code> (máximo 200) para paginar; los mensajes se devuelven en orden cronológico.
+            </Typography>
+            <CodeBlock language="bash" code={`GET /api/v1/sessions/SESSION_ID/chats/521551234567/messages?page=1&perPage=50
+Authorization: Bearer TU_API_KEY`} />
+            <CodeBlock code={`{
+  "success": true,
+  "sessionId": "ventas",
+  "phone": "521551234567",
+  "messages": [{ "id": 123, "messageType": "image", "direction": "incoming", "content": "Foto" }],
+  "pagination": { "page": 1, "perPage": 50, "total": 86, "totalPages": 2 }
+}`} />
+          </Section>
+
+          <Section id="delete-message-month" title="8. Eliminar un mes de mensajes (Profesional)">
+            <Typography paragraph>
+              Elimina únicamente el bloque correspondiente a un mes calendario del chat indicado. El mes debe enviarse como <code>YYYY-MM</code>. Esta operación es irreversible.
+            </Typography>
+            <CodeBlock language="bash" code={`DELETE /api/v1/sessions/SESSION_ID/chats/521551234567/messages/month/2026-07
+Authorization: Bearer TU_API_KEY`} />
+            <CodeBlock code={`{ "success": true, "phone": "521551234567", "month": "2026-07", "deleted": 143 }`} />
+          </Section>
+
+          <Section id="reject-call" title="9. Rechazar una llamada entrante (Profesional)">
+            <Typography paragraph>
+              Cancela una llamada entrante activa. Usa el <code>data.id</code> recibido en <code>call.incoming</code>. Si omites <code>callId</code>, se rechaza la llamada entrante activa más reciente.
+            </Typography>
+            <CodeBlock language="bash" code={`POST /api/v1/sessions/SESSION_ID/calls/reject
+Authorization: Bearer TU_API_KEY
+Content-Type: application/json
+
+{ "callId": "CALL_ID_DEL_WEBHOOK" }`} />
+          </Section>
+
           <Section id="webhooks" title="Webhooks (Eventos en Tiempo Real)">
             <Typography paragraph>
-              Configura un endpoint HTTPS en tu servidor para recibir notificaciones instantáneas de mensajes entrantes.
+              Configura un endpoint HTTPS para recibir mensajes entrantes, mensajes enviados desde tu propio WhatsApp y llamadas.
               Puedes configurar tu URL en el Panel de Control.
             </Typography>
 
@@ -243,6 +281,10 @@ const PublicDocumentation = () => {
     "fromMe": false
   }
 }`} />
+            <Typography paragraph sx={{ mt: 2 }}>
+              Los eventos disponibles son <code>message.received</code>, <code>message.sent</code>, <code>message.status</code>, <code>call.incoming</code> y <code>call.outgoing</code>.
+              Cada mensaje incluye <code>data.messageType</code> con valores como <code>text</code>, <code>image</code>, <code>voice</code>, <code>audio</code>, <code>video</code>, <code>document</code>, <code>sticker</code> o <code>location</code>. El objeto de llamada incluye su estado y si es videollamada.
+            </Typography>
             <Box sx={{ p: 2, mt: 2, bgcolor: '#fff7ed', borderRadius: 2, border: '1px solid #ffedd5', color: '#9a3412' }}>
               <Typography variant="body2">
                 <strong>Nota:</strong> Asegúrate de que tu endpoint responda con un status 200 OK rápidamente para evitar reintentos.
