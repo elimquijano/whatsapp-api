@@ -24,8 +24,6 @@ import {
   StepLabel,
   Stepper,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Typography,
   useMediaQuery,
   useTheme,
@@ -104,14 +102,12 @@ const newCampaignForm = (sessionId = '') => ({
 });
 
 const initialAiSettings = {
-  mode: 'inherit',
   aiProvider: 'openai_compatible',
   aiApiUrl: '',
   aiModel: '',
   aiApiToken: '',
   brandVoice: '',
   campaignInstructions: '',
-  inherited: {},
 };
 
 const initialAiRequest = {
@@ -1119,29 +1115,12 @@ const Campaigns = () => {
               <Paper variant="outlined" sx={{ p: 2.5 }}>
                 <Typography variant="subtitle1" fontWeight={900}>Motor de IA de esta sesión</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Puedes reutilizar la IA configurada en los flujos o separar este asistente con sus propias credenciales.
+                  Configura aquí las credenciales que usará exclusivamente el asistente de campañas.
                 </Typography>
                 <Alert severity="info" variant="outlined" sx={{ mb: 2 }}>
                   Para analizar imágenes, el modelo elegido debe aceptar entrada visual. Si es únicamente de texto, el sistema bloqueará el análisis en lugar de inventar una descripción.
                 </Alert>
-                <ToggleButtonGroup
-                  exclusive
-                  fullWidth
-                  value={aiSettings.mode}
-                  onChange={(_event, value) => value && setAiSettings({ ...aiSettings, mode: value })}
-                  sx={{ mb: 2 }}
-                >
-                  <ToggleButton value="inherit">Heredar IA de flujos</ToggleButton>
-                  <ToggleButton value="custom">Proveedor propio</ToggleButton>
-                </ToggleButtonGroup>
-                {aiSettings.mode === 'inherit' ? (
-                  <Alert severity={aiSettings.inherited?.available ? 'success' : 'warning'}>
-                    {aiSettings.inherited?.available
-                      ? `Se usará ${aiSettings.inherited.aiProvider || 'el proveedor configurado'} · ${aiSettings.inherited.aiModel}. ${aiSettings.inherited.hasBusinessContext ? 'El contexto de empresa está disponible.' : 'Conviene completar el contexto empresarial en IA de flujos.'}`
-                      : 'La IA heredada está incompleta. Configúrala en IA de flujos o selecciona un proveedor propio.'}
-                  </Alert>
-                ) : (
-                  <Grid container spacing={2}>
+                <Grid container spacing={2}>
                     <Grid item xs={12} sm={4}>
                       <TextField
                         fullWidth
@@ -1175,8 +1154,7 @@ const Campaigns = () => {
                         autoComplete="new-password"
                       />
                     </Grid>
-                  </Grid>
-                )}
+                </Grid>
                 <Grid container spacing={2} sx={{ mt: 0 }}>
                   <Grid item xs={12} sm={6}>
                     <TextField fullWidth multiline minRows={3} label="Voz de marca" value={aiSettings.brandVoice} onChange={(event) => setAiSettings({ ...aiSettings, brandVoice: event.target.value })} placeholder="Ej. Cercana, directa, sin exageraciones..." />

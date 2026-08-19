@@ -249,6 +249,7 @@ app.get("/api/v1/sessions/:sessionId/crm/events", authenticateToken, async (req,
 app.get("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages", authenticateToken, crmController.getContactMessages);
 app.get("/api/v1/sessions/:sessionId/chats/:phone/messages", authenticateToken, crmController.getStoredMessagesByPhone);
 app.delete("/api/v1/sessions/:sessionId/chats/:phone/messages/month/:month", authenticateToken, crmController.deleteStoredMessageMonth);
+app.get("/api/v1/sessions/:sessionId/message-deletion-jobs/:jobId", authenticateToken, crmController.getStoredMessageDeletionJob);
 app.post("/api/v1/sessions/:sessionId/calls/reject", authenticateToken, crmController.rejectIncomingCall);
 app.get("/api/v1/sessions/:sessionId/crm/contacts/:contactId/messages/:messageId/media", authenticateToken, crmController.getMessageMedia);
 app.put("/api/v1/sessions/:sessionId/crm/contacts/:contactId", authenticateToken, crmController.updateContact);

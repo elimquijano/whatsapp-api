@@ -88,5 +88,5 @@ La credencial autentica la cuenta y `:sessionId` delimita siempre la sesión de 
 - `POST /api/v1/sessions/:sessionId/crm/import-sources/:sourceId/run`: Importa clientes en esa sesión.
 - `GET|POST /api/v1/sessions/:sessionId/crm/campaigns`: Consulta o crea campañas de esa sesión.
 - `POST /api/v1/sessions/:sessionId/crm/campaigns/:campaignId/run|pause`: Controla una campaña de esa sesión.
-- `GET|PUT /api/v1/sessions/:sessionId/crm/campaign-ai/settings`: Configura el asistente de campañas de esa sesión, heredando la IA de flujos o usando proveedor/modelo/token propios.
+- `GET|PUT /api/v1/sessions/:sessionId/crm/campaign-ai/settings`: Configura directamente el proveedor, URL, modelo y token exclusivos del asistente de campañas de esa sesión.
 - `POST /api/v1/sessions/:sessionId/crm/campaign-ai/generate`: Genera estrategia, audiencia sugerida, copy editable, brief visual, prompt de imagen y checklist usando el contexto empresarial de la sesión.
