@@ -2,13 +2,13 @@ import React, { useState, useEffect } from 'react';
 import {
   Box, Typography, Paper, Button, 
   Tabs, Tab, IconButton, CircularProgress, Stack,
-  List, ListItem, ListItemButton, ListItemText, Divider,
+  List, ListItemButton, ListItemText, TextField,
   useTheme
 } from '@mui/material';
 import { 
-  PlayArrow, ContentCopy, Code, Terminal, 
-  CheckCircle, Error as ErrorIcon, Wifi,
-  FolderOpen, InsertDriveFile, Image, Audiotrack, Videocam
+  PlayArrow, Code, Terminal, Wifi,
+  InsertDriveFile, Image, Audiotrack, Videocam,
+  History, DeleteSweep, PhoneDisabled, TaskAlt
 } from '@mui/icons-material';
 import { API_HOST, apiUrl } from '../utils/apiUrl';
 
@@ -20,6 +20,7 @@ const ApiConsole = ({ mode = 'public', userToken = null, sessionId = '' }) => {
   const [activeTab, setActiveTab] = useState(0); // 0: Body, 1: Auth, 2: Response
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState(null);
+  const [selectedRequest, setSelectedRequest] = useState('Text Message');
 
   // Initial State
   const [endpoint, setEndpoint] = useState(`${messagesBase}/text`);
@@ -136,20 +137,53 @@ const ApiConsole = ({ mode = 'public', userToken = null, sessionId = '' }) => {
         filename: "oferta.pdf",
         caption: "Condiciones de la oferta"
       }
+    },
+    {
+      name: 'Historial del chat',
+      method: 'GET',
+      endpoint: `/api/v1/sessions/${sessionSegment}/chats/521551234567/messages?limit=50`,
+      icon: <History fontSize="small" />,
+      body: null
+    },
+    {
+      name: 'Eliminar mes',
+      method: 'DELETE',
+      endpoint: `/api/v1/sessions/${sessionSegment}/chats/521551234567/messages/month/2026-07`,
+      icon: <DeleteSweep fontSize="small" />,
+      body: null
+    },
+    {
+      name: 'Estado de eliminación',
+      method: 'GET',
+      endpoint: `/api/v1/sessions/${sessionSegment}/message-deletion-jobs/UUID`,
+      icon: <TaskAlt fontSize="small" />,
+      body: null
+    },
+    {
+      name: 'Rechazar llamada',
+      method: 'POST',
+      endpoint: `/api/v1/sessions/${sessionSegment}/calls/reject`,
+      icon: <PhoneDisabled fontSize="small" />,
+      body: {
+        callId: "CALL_ID_DEL_WEBHOOK"
+      }
     }
   ];
 
   // Load first collection item on mount
   useEffect(() => {
     setEndpoint(collections[0].endpoint);
+    setMethod(collections[0].method);
     setBody(JSON.stringify(collections[0].body, null, 2));
+    setSelectedRequest(collections[0].name);
     setResponse(null);
   }, [sessionId]);
 
   const handleSelectRequest = (item) => {
     setEndpoint(item.endpoint);
     setMethod(item.method);
-    setBody(JSON.stringify(item.body, null, 2));
+    setBody(item.body ? JSON.stringify(item.body, null, 2) : '');
+    setSelectedRequest(item.name);
     setResponse(null);
     setActiveTab(0);
   };
@@ -178,14 +212,15 @@ const ApiConsole = ({ mode = 'public', userToken = null, sessionId = '' }) => {
     // Actual API Call
     try {
       const startTime = Date.now();
-      const res = await fetch(requestUrl, {
+      const options = {
         method: method,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${userToken}`
-        },
-        body: body
-      });
+        }
+      };
+      if (!['GET', 'HEAD'].includes(method) && body.trim()) options.body = body;
+      const res = await fetch(requestUrl, options);
       const data = await res.json();
       setLoading(false);
       setResponse({
@@ -233,12 +268,12 @@ const ApiConsole = ({ mode = 'public', userToken = null, sessionId = '' }) => {
         <Box sx={{ p: 2, borderBottom: '1px solid #334155', display: { xs: 'none', md: 'block' } }}>
           <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 800, letterSpacing: 1 }}>COLLECTIONS</Typography>
         </Box>
-        <List sx={{ p: { xs: 1, md: 0 }, display: { xs: 'flex', md: 'block' }, gap: { xs: 0.75, md: 0 }, overflowX: { xs: 'auto', md: 'visible' } }}>
+        <List sx={{ p: { xs: 1, md: 0 }, display: { xs: 'flex', md: 'block' }, gap: { xs: 0.75, md: 0 }, overflowX: { xs: 'auto', md: 'hidden' }, overflowY: { xs: 'hidden', md: 'auto' } }}>
           {collections.map((item, index) => (
             <ListItemButton 
               key={index} 
               onClick={() => handleSelectRequest(item)}
-              selected={JSON.stringify(item.body, null, 2) === body}
+              selected={selectedRequest === item.name}
               sx={{ 
                 py: 1, 
                 minWidth: { xs: 'max-content', md: 0 },
@@ -247,7 +282,7 @@ const ApiConsole = ({ mode = 'public', userToken = null, sessionId = '' }) => {
                 '&:hover': { bgcolor: 'rgba(255,255,255,0.05)' }
               }}
             >
-              <Box sx={{ color: item.method === 'POST' ? '#f59e0b' : '#22c55e', mr: 1, display: 'flex' }}>
+              <Box sx={{ color: item.method === 'DELETE' ? '#f87171' : item.method === 'POST' ? '#f59e0b' : '#22c55e', mr: 1, display: 'flex' }}>
                 {item.icon}
               </Box>
               <ListItemText 
@@ -298,7 +333,7 @@ const ApiConsole = ({ mode = 'public', userToken = null, sessionId = '' }) => {
         }}>
           <Box sx={{ 
             px: 1, py: 0.5, 
-            bgcolor: '#f59e0b', 
+            bgcolor: method === 'DELETE' ? '#f87171' : method === 'POST' ? '#f59e0b' : '#22c55e',
             color: '#0f172a', 
             borderRadius: 1, 
             fontSize: '0.75rem', 
@@ -306,19 +341,18 @@ const ApiConsole = ({ mode = 'public', userToken = null, sessionId = '' }) => {
           }}>
             {method}
           </Box>
-          <Typography sx={{ 
+          <TextField
+            value={endpoint}
+            onChange={(event) => setEndpoint(event.target.value)}
+            aria-label="Ruta del endpoint"
+            variant="standard"
+            InputProps={{ disableUnderline: true }}
+            sx={{
             flexGrow: 1, 
             minWidth: 0,
             width: { xs: 'calc(100% - 72px)', sm: 'auto' },
-            fontFamily: 'monospace', 
-            fontSize: '0.9rem', 
-            color: '#cbd5e1',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}>
-            {requestUrl}
-          </Typography>
+            '& input': { fontFamily: 'monospace', fontSize: '0.9rem', color: '#cbd5e1' }
+          }} />
           <Button 
             variant="contained" 
             size="small"
