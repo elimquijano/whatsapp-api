@@ -49,9 +49,10 @@ const PublicDocumentation = () => {
     { id: 'messages-doc-url', label: 'Documentos (URL)' },
     { id: 'messages-doc-base64', label: 'Documentos (Base64)' },
     { id: 'messages-audio', label: 'Audio / Voz' },
-    { id: 'stored-messages', label: 'Historial (Profesional)' },
-    { id: 'delete-message-month', label: 'Eliminar mes (Profesional)' },
-    { id: 'reject-call', label: 'Rechazar llamada (Profesional)' },
+    { id: 'professional-apis', label: 'APIs Profesionales' },
+    { id: 'stored-messages', label: '  Historial de chat' },
+    { id: 'delete-message-month', label: '  Eliminar mes' },
+    { id: 'reject-call', label: '  Rechazar llamada' },
     { id: 'webhooks', label: 'Webhooks' },
   ];
 
@@ -222,11 +223,33 @@ const PublicDocumentation = () => {
 }`} />
           </Section>
 
+          <Section id="professional-apis" title="APIs exclusivas del plan Profesional">
+            <Typography paragraph>
+              Esta sección reúne las operaciones avanzadas para integrar conversaciones guardadas y llamadas con tu CRM. Todas requieren una sesión perteneciente a una cuenta con plan Profesional vigente.
+            </Typography>
+            <Grid container spacing={2}>
+              {[
+                { method: 'GET', title: 'Últimos N mensajes', detail: 'Consulta el historial persistido de una sesión y un número de chat.', target: 'stored-messages' },
+                { method: 'DELETE', title: 'Eliminar mensajes de un mes', detail: 'Encola la limpieza mensual y permite consultar el estado de la tarea.', target: 'delete-message-month' },
+                { method: 'POST', title: 'Rechazar llamada entrante', detail: 'Cuelga una llamada activa usando el identificador recibido por webhook.', target: 'reject-call' },
+              ].map((api) => (
+                <Grid item xs={12} md={4} key={api.target}>
+                  <Paper variant="outlined" sx={{ p: 2.5, height: '100%', borderRadius: 3 }}>
+                    <Chip label={api.method} color={api.method === 'GET' ? 'info' : api.method === 'DELETE' ? 'error' : 'warning'} size="small" sx={{ mb: 1.5, fontWeight: 800 }} />
+                    <Typography variant="h6" fontWeight={800}>{api.title}</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ my: 1.5 }}>{api.detail}</Typography>
+                    <Button size="small" onClick={() => scrollTo(api.target)}>Ver endpoint</Button>
+                  </Paper>
+                </Grid>
+              ))}
+            </Grid>
+          </Section>
+
           <Section id="stored-messages" title="7. Obtener mensajes guardados (Profesional)">
             <Typography paragraph>
-              Obtiene el historial guardado de un número dentro de una sesión. Usa <code>page</code> y <code>perPage</code> (máximo 200) para paginar; los mensajes se devuelven en orden cronológico.
+              Obtiene los últimos N mensajes guardados de un número dentro de una sesión. Usa <code>limit=N</code> (máximo 200), o <code>page</code> y <code>perPage</code> para recorrer páginas; los mensajes se devuelven en orden cronológico.
             </Typography>
-            <CodeBlock language="bash" code={`GET /api/v1/sessions/SESSION_ID/chats/521551234567/messages?page=1&perPage=50
+            <CodeBlock language="bash" code={`GET /api/v1/sessions/SESSION_ID/chats/521551234567/messages?limit=50
 Authorization: Bearer TU_API_KEY`} />
             <CodeBlock code={`{
   "success": true,
@@ -239,11 +262,14 @@ Authorization: Bearer TU_API_KEY`} />
 
           <Section id="delete-message-month" title="8. Eliminar un mes de mensajes (Profesional)">
             <Typography paragraph>
-              Elimina únicamente el bloque correspondiente a un mes calendario del chat indicado. El mes debe enviarse como <code>YYYY-MM</code>. Esta operación es irreversible.
+              Encola, sin esperar, la eliminación del mes calendario indicado. El mes debe enviarse como <code>YYYY-MM</code>. La API responde <code>202</code> con un <code>jobId</code>; consulta la tarea hasta que quede <code>completed</code> o <code>failed</code>. Esta operación es irreversible.
             </Typography>
             <CodeBlock language="bash" code={`DELETE /api/v1/sessions/SESSION_ID/chats/521551234567/messages/month/2026-07
 Authorization: Bearer TU_API_KEY`} />
-            <CodeBlock code={`{ "success": true, "phone": "521551234567", "month": "2026-07", "deleted": 143 }`} />
+            <CodeBlock code={`{ "success": true, "phone": "521551234567", "month": "2026-07", "jobId": "UUID", "status": "queued" }`} />
+            <CodeBlock language="bash" code={`GET /api/v1/sessions/SESSION_ID/message-deletion-jobs/UUID
+Authorization: Bearer TU_API_KEY`} />
+            <CodeBlock code={`{ "success": true, "jobId": "UUID", "status": "completed", "deleted": 143 }`} />
           </Section>
 
           <Section id="reject-call" title="9. Rechazar una llamada entrante (Profesional)">

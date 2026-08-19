@@ -18,6 +18,7 @@ import { isInternalLidJid, normalizePhoneNumber, phoneJidFromNumber } from "../u
 import { campaignAudienceWhere } from "../utils/campaignAudience.js";
 import { downloadMediaMessage } from "@whiskeysockets/baileys";
 import { publishCrmUpdate } from "../services/crmRealtimeService.js";
+import crypto from "node:crypto";
 
 const statuses = new Set(["new", "interested", "urgent", "follow_up", "customer", "not_interested"]);
 const automationModes = new Set(["inherit", "automatic", "human"]);
@@ -25,6 +26,8 @@ const webhookModes = new Set(["inherit", "enabled", "disabled"]);
 const importMethods = new Set(["GET", "POST"]);
 const IMPORT_TIMEOUT_MS = 20000;
 const MAX_IMPORT_RESPONSE_BYTES = 10 * 1024 * 1024;
+const messageDeletionJobs = new Map();
+const MESSAGE_DELETION_JOB_TTL_MS = 60 * 60 * 1000;
 const ownedSession = (userId, sessionId) => WhatsAppSession.findOne({ where: { userId, sessionId } });
 const requestedSessionId = (req) => (
   sessionIdFromRequest(req, { allowLegacyBody: true })
@@ -201,16 +204,40 @@ export const deleteStoredMessageMonth = async (req, res) => {
     const [year, monthNumber] = month.split("-").map(Number);
     const start = new Date(Date.UTC(year, monthNumber - 1, 1));
     const end = new Date(Date.UTC(year, monthNumber, 1));
-    const deleted = await AiMessage.destroy({
-      where: { whatsappSessionId: session.id, contactNumber: phone, messageTimestamp: { [Op.gte]: start, [Op.lt]: end } },
+    const jobId = crypto.randomUUID();
+    const job = { jobId, userId: req.user.id, sessionId: session.sessionId, phone, month, status: "queued", createdAt: new Date().toISOString() };
+    messageDeletionJobs.set(jobId, job);
+    setImmediate(async () => {
+      try {
+        job.status = "running";
+        const deleted = await AiMessage.destroy({
+          where: { whatsappSessionId: session.id, contactNumber: phone, messageTimestamp: { [Op.gte]: start, [Op.lt]: end } },
+        });
+        const contact = await CrmContact.findOne({ where: { whatsappSessionId: session.id, phone } });
+        if (contact) {
+          const latest = await AiMessage.findOne({ where: { whatsappSessionId: session.id, contactNumber: phone }, order: [["messageTimestamp", "DESC"]] });
+          await contact.update({ lastMessageAt: latest?.messageTimestamp || null, lastMessagePreview: latest?.content?.slice(0, 500) || null, unreadCount: 0 });
+        }
+        Object.assign(job, { status: "completed", deleted, completedAt: new Date().toISOString() });
+      } catch (error) {
+        Object.assign(job, { status: "failed", error: error.message, completedAt: new Date().toISOString() });
+      } finally {
+        setTimeout(() => messageDeletionJobs.delete(jobId), MESSAGE_DELETION_JOB_TTL_MS).unref?.();
+      }
     });
-    const contact = await CrmContact.findOne({ where: { whatsappSessionId: session.id, phone } });
-    if (contact) {
-      const latest = await AiMessage.findOne({ where: { whatsappSessionId: session.id, contactNumber: phone }, order: [["messageTimestamp", "DESC"]] });
-      await contact.update({ lastMessageAt: latest?.messageTimestamp || null, lastMessagePreview: latest?.content?.slice(0, 500) || null, unreadCount: 0 });
-    }
-    res.json({ success: true, sessionId: session.sessionId, phone, month, deleted });
+    res.status(202).json({ success: true, sessionId: session.sessionId, phone, month, jobId, status: "queued" });
   } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+};
+
+export const getStoredMessageDeletionJob = async (req, res) => {
+  const session = await professionalSession(req, res);
+  if (!session) return;
+  const job = messageDeletionJobs.get(req.params.jobId);
+  if (!job || job.userId !== req.user.id || job.sessionId !== session.sessionId) {
+    return res.status(404).json({ success: false, error: "Tarea de eliminación no encontrada o expirada" });
+  }
+  const { userId: _userId, ...publicJob } = job;
+  return res.json({ success: true, ...publicJob });
 };
 
 export const rejectIncomingCall = async (req, res) => {

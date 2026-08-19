@@ -6,7 +6,6 @@ import CampaignAiConfig from "../models/CampaignAiConfig.js";
 import aiCrmService, { validateAiProviderUrl } from "../services/aiCrmService.js";
 import { prepareMediaPayload, resolveMediaInput } from "../services/messageService.js";
 
-const allowedModes = new Set(["inherit", "custom"]);
 const allowedProviders = new Set(["openai", "groq", "openai_compatible", "gemini"]);
 const allowedStatuses = new Set(["new", "interested", "urgent", "follow_up", "customer", "not_interested"]);
 const boundedText = (value, limit) => String(value || "").trim().slice(0, limit);
@@ -31,34 +30,21 @@ const professionalSession = async (req, res) => {
 
 const inheritedConfig = (whatsappSessionId) => AiSessionConfig.findOne({ where: { whatsappSessionId } });
 
-const publicSettings = (settings, inherited) => ({
-  mode: settings?.mode || "inherit",
+const publicSettings = (settings) => ({
   aiProvider: settings?.aiProvider || "openai_compatible",
   aiApiUrl: settings?.aiApiUrl || "",
   aiModel: settings?.aiModel || "",
   hasCustomToken: Boolean(settings?.aiApiToken),
   brandVoice: settings?.brandVoice || "",
   campaignInstructions: settings?.campaignInstructions || "",
-  inherited: {
-    available: Boolean(inherited?.aiApiUrl && inherited?.aiModel && inherited?.aiApiToken),
-    aiProvider: inherited?.aiProvider || "",
-    aiApiUrl: inherited?.aiApiUrl || "",
-    aiModel: inherited?.aiModel || "",
-    hasToken: Boolean(inherited?.aiApiToken),
-    agentName: inherited?.agentName || "",
-    hasBusinessContext: Boolean(inherited?.context || inherited?.role),
-  },
 });
 
 export const getCampaignAiSettings = async (req, res) => {
   try {
     const session = await professionalSession(req, res);
     if (!session) return;
-    const [settings, inherited] = await Promise.all([
-      CampaignAiConfig.findOne({ where: { whatsappSessionId: session.id } }),
-      inheritedConfig(session.id),
-    ]);
-    res.json({ success: true, sessionId: session.sessionId, settings: publicSettings(settings, inherited) });
+    const settings = await CampaignAiConfig.findOne({ where: { whatsappSessionId: session.id } });
+    res.json({ success: true, sessionId: session.sessionId, settings: publicSettings(settings) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -68,45 +54,40 @@ export const saveCampaignAiSettings = async (req, res) => {
   try {
     const session = await professionalSession(req, res);
     if (!session) return;
-    const mode = allowedModes.has(req.body.mode) ? req.body.mode : "inherit";
     const provider = allowedProviders.has(req.body.aiProvider) ? req.body.aiProvider : "openai_compatible";
     const aiApiUrl = boundedText(req.body.aiApiUrl, 2048);
     const aiModel = boundedText(req.body.aiModel, 255);
-    if (mode === "custom") {
-      if (!aiApiUrl || !aiModel) return res.status(400).json({ success: false, error: "Indica la URL y el modelo del proveedor personalizado" });
-      validateAiProviderUrl(provider, aiApiUrl);
-    }
+    if (!aiApiUrl || !aiModel) return res.status(400).json({ success: false, error: "Indica la URL y el modelo para la IA de campañas" });
+    validateAiProviderUrl(provider, aiApiUrl);
 
     let settings = await CampaignAiConfig.findOne({ where: { whatsappSessionId: session.id } });
     const previousToken = settings?.aiApiToken || null;
+    const aiApiToken = req.body.clearToken === true ? null : (boundedText(req.body.aiApiToken, 12000) || previousToken);
+    if (!aiApiToken) return res.status(400).json({ success: false, error: "Indica el token de la IA para campañas" });
     const values = {
       whatsappSessionId: session.id,
-      mode,
+      mode: "custom",
       aiProvider: provider,
       aiApiUrl: aiApiUrl || null,
       aiModel: aiModel || null,
-      aiApiToken: req.body.clearToken === true ? null : (req.body.aiApiToken || previousToken),
+      aiApiToken,
       brandVoice: boundedText(req.body.brandVoice, 4000) || null,
       campaignInstructions: boundedText(req.body.campaignInstructions, 12000) || null,
     };
     settings = settings ? await settings.update(values) : await CampaignAiConfig.create(values);
-    const inherited = await inheritedConfig(session.id);
-    res.json({ success: true, sessionId: session.sessionId, settings: publicSettings(settings, inherited) });
+    res.json({ success: true, sessionId: session.sessionId, settings: publicSettings(settings) });
   } catch (error) {
     res.status(error.statusCode || 400).json({ success: false, error: error.message });
   }
 };
 
-const effectiveAiConfig = (settings, inherited) => {
-  if ((settings?.mode || "inherit") === "inherit") return inherited;
-  return {
+const effectiveAiConfig = (settings) => settings ? ({
     aiProvider: settings.aiProvider,
     aiApiUrl: settings.aiApiUrl,
     aiModel: settings.aiModel,
     aiApiToken: settings.aiApiToken,
     temperature: 0.35,
-  };
-};
+  }) : null;
 
 const normalizeDraft = (raw, request) => {
   const messageType = ["text", "image", "video", "audio", "document"].includes(raw?.messageType) ? raw.messageType : "image";
@@ -148,9 +129,9 @@ export const generateCampaignDraft = async (req, res) => {
       CampaignAiConfig.findOne({ where: { whatsappSessionId: session.id } }),
       inheritedConfig(session.id),
     ]);
-    const effective = effectiveAiConfig(settings, inherited);
+    const effective = effectiveAiConfig(settings);
     if (!effective?.aiApiUrl || !effective?.aiModel || !effective?.aiApiToken) {
-      return res.status(400).json({ success: false, error: "Configura una IA para campañas o completa la IA heredada de los flujos" });
+      return res.status(400).json({ success: false, error: "Configura la URL, el modelo y el token de la IA para campañas" });
     }
     validateAiProviderUrl(effective.aiProvider || "openai_compatible", effective.aiApiUrl);
 
@@ -207,7 +188,7 @@ Responde exclusivamente JSON con esta forma: {"campaignName":"...","strategySumm
     res.json({
       success: true,
       sessionId: session.sessionId,
-      source: settings?.mode === "custom" ? "custom" : "inherited",
+      source: "campaign",
       analyzedImage: Boolean(imageDataUri),
       draft: normalizeDraft(raw, request),
     });
